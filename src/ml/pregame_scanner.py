@@ -649,7 +649,7 @@ class PregameScanner:
 
         return ScanReport(
             timestamp=datetime.now().isoformat(),
-            sport=sport,
+            sport=", ".join(target_leagues),
             model_name=model_type,
             model_path=self.model_path,
             features_used=self.selected_features,
