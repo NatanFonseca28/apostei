@@ -1,10 +1,10 @@
 import logging
 import sys
 
-from .extractor import DataExtractor
-from .feature_engineering import add_ewma_features
-from .models import create_tables, get_engine, get_session
-from .persistence import DataPersister, FeaturePersister
+from .data.extractor import DataExtractor
+from .data.feature_engineering import add_ewma_features
+from .data.models import create_tables, get_engine, get_session
+from .data.persistence import DataPersister, FeaturePersister
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler(sys.stdout)])

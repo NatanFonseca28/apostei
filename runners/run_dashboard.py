@@ -75,9 +75,9 @@ CLASSES = ["A", "D", "H"]
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_etl(engine, Session) -> int:
-    logger.info("━" * 60)
-    logger.info("ETAPA 1 — ETL: Extração Híbrida (soccerdata + Understat)")
-    logger.info("━" * 60)
+    logger.info("=" * 60)
+    logger.info("ETAPA 1 - ETL: Extracao Hibrida (soccerdata + Understat)")
+    logger.info("=" * 60)
 
     extractor = DataExtractor()
     persister = DataPersister(Session)
@@ -99,9 +99,9 @@ def run_etl(engine, Session) -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def load_ml_dataset(engine) -> pd.DataFrame:
-    logger.info("━" * 60)
-    logger.info("ETAPA 2 — Carregando dataset para ML")
-    logger.info("━" * 60)
+    logger.info("=" * 60)
+    logger.info("ETAPA 2 - Carregando dataset para ML")
+    logger.info("=" * 60)
 
     query = """
         SELECT m.id, m.date, m.home_team, m.away_team,
@@ -140,9 +140,9 @@ def multiclass_brier(y_true, y_prob):
 
 
 def run_training(df: pd.DataFrame, n_splits: int = 5):
-    logger.info("━" * 60)
-    logger.info("ETAPA 3 — Treinamento ML com TimeSeriesSplit")
-    logger.info("━" * 60)
+    logger.info("=" * 60)
+    logger.info("ETAPA 3 - Treinamento ML com TimeSeriesSplit")
+    logger.info("-" * 60)
 
     X = df[FEATURE_COLS].values
     y = df["target"].values
@@ -191,7 +191,7 @@ def run_training(df: pd.DataFrame, n_splits: int = 5):
                           "log_loss": ll, "brier": bs, "accuracy": acc})
 
             last_probs, last_true = y_prob, y_val
-            logger.info(f"  [{name}] Fold {fold_i} | Treino {len(train_idx):4d} → Val {len(val_idx):4d} | "
+            logger.info(f"  [{name}] Fold {fold_i} | Treino {len(train_idx):4d} -> Val {len(val_idx):4d} | "
                         f"LL={ll:.4f} BS={bs:.4f} Acc={acc:.3f}")
 
         calibration_data[name] = (last_true, last_probs)
@@ -205,9 +205,9 @@ def run_training(df: pd.DataFrame, n_splits: int = 5):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_ev_analysis():
-    logger.info("━" * 60)
-    logger.info("ETAPA 4 — Análise de Valor Esperado (EV)")
-    logger.info("━" * 60)
+    logger.info("-" * 60)
+    logger.info("ETAPA 4 - Analise de Valor Esperado (EV)")
+    logger.info("-" * 60)
 
     scanner = PregameScanner(db_path="sqlite:///understat_premier_league.db")
     value_bets = []
@@ -283,7 +283,7 @@ def build_dashboard(df_raw: pd.DataFrame, ml_results: dict,
     fig.patch.set_facecolor(CLR["bg"])
 
     gs = gridspec.GridSpec(
-        5, 3,
+        5, 4,  # Expandido para 4 colunas (3 modelos + 1 baseline)
         figure=fig,
         hspace=0.55,
         wspace=0.38,
@@ -291,11 +291,11 @@ def build_dashboard(df_raw: pd.DataFrame, ml_results: dict,
         left=0.06, right=0.97,
     )
 
-    # ── Título principal ──────────────────────────────────────────────────────
-    fig.text(0.5, 0.97, "⚽  EPL xG Prediction Dashboard",
+    # -- Titulo principal ------------------------------------------------------
+    fig.text(0.5, 0.97, "EPL xG Prediction Dashboard",
              ha="center", va="top", fontsize=22, fontweight="bold",
              color=CLR["text"])
-    fig.text(0.5, 0.955, "Pipeline: ETL → Feature Engineering → ML (TimeSeriesSplit) → Expected Value",
+    fig.text(0.5, 0.955, "Pipeline: ETL -> Feature Engineering -> ML (TimeSeriesSplit) -> Expected Value",
              ha="center", va="top", fontsize=11, color=CLR["subtext"])
              
     import datetime
@@ -304,7 +304,7 @@ def build_dashboard(df_raw: pd.DataFrame, ml_results: dict,
              ha="right", va="bottom", fontsize=9, color=CLR["subtext"], style="italic")
 
     model_names   = list(ml_results.keys())
-    model_colors  = [CLR["blue"], CLR["orange"]]
+    model_colors  = [CLR["blue"], CLR["orange"], CLR["green"], CLR["purple"]]
     baseline_vals = {"log_loss": 1.0986, "brier": 0.6667, "accuracy": 0.333}
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -628,9 +628,9 @@ def main():
     df_ev, is_live_data = run_ev_analysis()
 
     # 5. Dashboard
-    logger.info("━" * 60)
-    logger.info("ETAPA 5 — Gerando Dashboard")
-    logger.info("━" * 60)
+    logger.info("-" * 60)
+    logger.info("ETAPA 5 - Gerando Dashboard")
+    logger.info("-" * 60)
     build_dashboard(df, ml_results, calibration_data, df_ev, is_live_data)
 
 

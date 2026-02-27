@@ -51,13 +51,17 @@ LEAGUE_MAPPING = {
 }
 
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
 }
 
 def _season_code(year: int) -> str:
@@ -160,11 +164,13 @@ class MatchHistoryReader:
 # ============================================================================
 
 class FBrefReader:
-    """Extrai xG do FBref via soccerdata para múltiplas ligas."""
+    """Extrai xG do FBref via soccerdata para multiplas ligas."""
 
     def read_leagues(self, start_year: int, end_year: int, fbref_leagues: list[str]) -> pd.DataFrame:
         """Busca temporadas para uma lista de ligas do FBref."""
         seasons_str = [_season_code(y) for y in range(start_year, end_year + 1)]
+        import time, random
+        time.sleep(random.uniform(1.0, 3.0)) # Atraso polido para evitar blocks
         logger.info(f"FBref: Coletando {fbref_leagues} para {seasons_str}")
         
         try:
