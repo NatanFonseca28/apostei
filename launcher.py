@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import logging
-from src.ml.pregame_scanner import PregameScanner
 
 # Configuração de logging básico
 logging.basicConfig(level=logging.INFO)
@@ -24,7 +23,24 @@ api_key = st.sidebar.text_input(
     help="Insira sua chave da API da The Odds API."
 )
 
-# 2. Banca Disponível
+# 2. Seleção de Ligas (Multiselect)
+league_options = {
+    'Premier League': 'soccer_epl',
+    'Brasileirão Série A': 'soccer_brazil_campeonato',
+    'Champions League': 'soccer_uefa_champs_league'
+}
+
+selected_league_names = st.sidebar.multiselect(
+    "Ligas Alvo",
+    options=list(league_options.keys()),
+    default=['Premier League'],
+    help="Selecione as ligas para escanear oportunidades."
+)
+
+# Mapeia nomes para chaves da API
+selected_leagues = [league_options[name] for name in selected_league_names]
+
+# 3. Banca Disponível
 bankroll = st.sidebar.number_input(
     "Banca Atual ($)", 
     min_value=10.0, 
@@ -33,7 +49,7 @@ bankroll = st.sidebar.number_input(
     help="Valor para cálculo do Staking (Kelly)."
 )
 
-# 3. Slider de EV Mínimo
+# 4. Slider de EV Mínimo
 min_ev_pct = st.sidebar.slider(
     "EV Mínimo (%)", 
     min_value=0.0, 
@@ -58,9 +74,18 @@ st.divider()
 # Botão principal
 if st.button("🚀 Iniciar Análise Real (Live Market)", type="primary", use_container_width=True):
     
+    # Validações
     if not api_key:
         st.error("❌ Erro: Insira a chave da API (The Odds API Key) na barra lateral antes de iniciar.")
         st.stop()
+    
+    if not selected_leagues:
+        st.error("❌ Erro: Selecione pelo menos uma liga na barra lateral.")
+        st.stop()
+    
+    # IMPORT ATRASADO (Late Import): Evita que o Streamlit demore a carregar a UI inicial
+    with st.spinner('⚙️ Carregando motor de IA e Scanner...'):
+        from src.ml.pregame_scanner import PregameScanner
     
     scanner = PregameScanner(
         db_path="sqlite:///understat_premier_league.db",
@@ -68,16 +93,18 @@ if st.button("🚀 Iniciar Análise Real (Live Market)", type="primary", use_con
     )
     
     try:
-        with st.spinner('🚀 Buscando odds e rodando inferência real...'):
+        with st.spinner(f'🚀 Buscando odds para {len(selected_leagues)} ligas e rodando inferência...'):
+            # Predição para os próximos 7 dias (168h)
             report = scanner.scan(
                 min_ev=min_ev_pct / 100.0, 
                 bankroll=bankroll,
-                hours_window=24.0,
+                leagues=selected_leagues,
+                hours_window=168.0, 
                 odds_source="pinnacle"
             )
         
         if not report.value_bets:
-            st.warning(f"⚠️ Nenhuma oportunidade de Valor Esperado (EV > {min_ev_pct}%) encontrada para as próximas 24 horas.")
+            st.warning(f"⚠️ Nenhuma oportunidade de Valor Esperado (EV > {min_ev_pct}%) encontrada para os próximos 7 dias.")
         else:
             st.success(f"✅ Análise concluída! Encontramos {len(report.value_bets)} oportunidades de valor.")
             
@@ -117,17 +144,17 @@ if st.button("🚀 Iniciar Análise Real (Live Market)", type="primary", use_con
                 "Odd": "{:.2f}",
                 "EV": "{:+.1f}%",
                 "Stake Sugerida": "R$ {:.2f}"
-            }).applymap(style_ev, subset=['EV'])
+            }).map(style_ev, subset=['EV'])
 
             # Exibição
-            st.subheader("📊 Oportunidades de Valor Identificadas")
+            st.subheader("📊 Oportunidades de Valor Identificadas (Próximos 7 Dias)")
             st.dataframe(
                 styled_df,
                 use_container_width=True,
                 hide_index=True
             )
             
-            st.info(f"💡 Foram analisados {report.events_scanned} eventos. Créditos da API restantes: {report.api_requests_remaining}")
+            st.info(f"💡 Foram analisados {report.events_scanned} eventos em {len(selected_leagues)} ligas. Créditos da API restantes: {report.api_requests_remaining}")
 
     except Exception as e:
         st.error(f"❌ Erro crítico: {str(e)}")

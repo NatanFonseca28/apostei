@@ -450,16 +450,16 @@ class PregameScanner:
         bankroll: float = 1000.0,
         staking_config: StakingConfig | None = None,
         odds_source: str = "pinnacle",
-        sport: str = ODDS_API_SPORT,
+        leagues: list[str] | None = None,
         bookmakers_to_fetch: list[str] | None = None,
         hours_window: float = 24.0,
         use_best_odds: bool = False,
     ) -> ScanReport:
         """
-        Executa o escaneamento completo pre-jogo.
+        Executa o escaneamento completo pre-jogo para múltiplas ligas.
 
         Fluxo:
-          1. Busca odds ao vivo da API
+          1. Busca odds ao vivo da API para cada liga na lista
           2. Carrega features do banco
           3. Para cada evento com features:
              a. Constroi vetor de features
@@ -479,8 +479,8 @@ class PregameScanner:
             Configuracao de risco (default: MODERATE).
         odds_source : str
             Bookmaker preferido: "pinnacle" (sharp), "bet365", "best" (melhor odd).
-        sport : str
-            Esporte na API.
+        leagues : list[str], opcional
+            Lista de ligas na API (default: ['soccer_epl']).
         bookmakers_to_fetch : list[str], opcional
             Casas a buscar. Se None, busca todas.
         hours_window : float
@@ -495,19 +495,30 @@ class PregameScanner:
         config = staking_config or MODERATE
         self._api_remaining = None
         self._api_used = None
+        
+        target_leagues = leagues or [ODDS_API_SPORT]
 
         logger.info("=" * 60)
-        logger.info("PREGAME SCANNER — Escaneamento Pre-Jogo")
+        logger.info("PREGAME SCANNER — Escaneamento Pre-Jogo (Múltiplas Ligas)")
         logger.info("=" * 60)
         logger.info(f"  EV minimo: {min_ev*100:.1f}% | Banca: ${bankroll:,.2f}")
-        logger.info(f"  Odds: {odds_source} | Janela: {hours_window}h")
+        logger.info(f"  Ligas: {target_leagues} | Janela: {hours_window}h")
 
         # ── 1. Odds ao vivo ──────────────────────────────────────────────────
         logger.info("\n[1/4] Buscando odds ao vivo...")
-        live_events = self.fetch_live_odds(sport, bookmakers_to_fetch)
+        all_live_events = []
+        
+        for league in target_leagues:
+            try:
+                league_events = self.fetch_live_odds(league, bookmakers_to_fetch)
+                if league_events:
+                    all_live_events.extend(league_events)
+            except Exception as e:
+                logger.error(f"Erro ao buscar odds para a liga {league}: {e}")
+                continue
 
-        if not live_events:
-            logger.warning("Nenhum evento encontrado. Verifique a API key e o esporte.")
+        if not all_live_events:
+            logger.warning("Nenhum evento encontrado nas ligas selecionadas. Verifique a API key.")
             return self._empty_report(min_ev, bankroll, config)
 
         # Filtra por janela de tempo
@@ -515,7 +526,7 @@ class PregameScanner:
         cutoff = now + timedelta(hours=hours_window)
 
         filtered_events = []
-        for ev in live_events:
+        for ev in all_live_events:
             try:
                 ct = datetime.fromisoformat(ev.commence_time.replace("Z", "+00:00"))
                 ct_naive = ct.replace(tzinfo=None)
@@ -524,7 +535,7 @@ class PregameScanner:
             except (ValueError, TypeError):
                 filtered_events.append(ev)  # Se nao parsear, inclui
 
-        logger.info(f"  Eventos na janela de {hours_window}h: {len(filtered_events)}/{len(live_events)}")
+        logger.info(f"  Eventos consolidados na janela de {hours_window}h: {len(filtered_events)}/{len(all_live_events)}")
 
         # ── 2. Features do banco ─────────────────────────────────────────────
         logger.info("\n[2/4] Carregando features do banco local...")
