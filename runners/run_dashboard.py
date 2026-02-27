@@ -33,6 +33,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
 from src.core.ev_calculator import calculate_ev, scan_matches
+from src.ml.pregame_scanner import PregameScanner
 from src.data.feature_engineering import add_ewma_features
 from src.data.models import create_tables, get_engine, get_session
 from src.data.persistence import DataPersister, FeaturePersister
@@ -199,45 +200,48 @@ def run_ev_analysis():
     logger.info("ETAPA 4 — Análise de Valor Esperado (EV)")
     logger.info("━" * 60)
 
-    rodada = [
-        {"home_team": "Arsenal",     "away_team": "Chelsea",
-         "probs": {"H": 0.55, "D": 0.22, "A": 0.23},
-         "odds":  {"H": 2.10, "D": 3.40, "A": 3.80}},
-        {"home_team": "Liverpool",   "away_team": "Man United",
-         "probs": {"H": 0.58, "D": 0.22, "A": 0.20},
-         "odds":  {"H": 1.90, "D": 3.60, "A": 4.20}},
-        {"home_team": "Man City",    "away_team": "Everton",
-         "probs": {"H": 0.72, "D": 0.17, "A": 0.11},
-         "odds":  {"H": 1.45, "D": 4.50, "A": 7.00}},
-        {"home_team": "Tottenham",   "away_team": "Newcastle",
-         "probs": {"H": 0.45, "D": 0.27, "A": 0.28},
-         "odds":  {"H": 2.30, "D": 3.20, "A": 3.10}},
-        {"home_team": "Aston Villa", "away_team": "Brighton",
-         "probs": {"H": 0.40, "D": 0.28, "A": 0.32},
-         "odds":  {"H": 2.60, "D": 3.10, "A": 2.80}},
-        {"home_team": "Wolves",      "away_team": "Brentford",
-         "probs": {"H": 0.35, "D": 0.30, "A": 0.35},
-         "odds":  {"H": 2.85, "D": 3.30, "A": 2.85}},
-    ]
+    scanner = PregameScanner(db_path="sqlite:///understat_premier_league.db")
+    value_bets = []
+    mode = "AO VIVO"
+    
+    try:
+        report = scanner.scan(
+            min_ev=0.0,
+            bankroll=1000.0,
+            hours_window=24.0,
+            odds_source="pinnacle",
+        )
+        value_bets = report.value_bets
+    except Exception as e:
+        logger.warning(f"Falha ao buscar odds ao vivo na The Odds API: {e}")
 
+    if not value_bets:
+        logger.warning("Nenhuma partida 'AO VIVO' encontrada nas próximas 24h ou falha na API.")
+        logger.warning("Acionando Fallback Gracioso: 'OFFLINE' demostration.")
+        mode = "OFFLINE"
+        
+        try:
+            report = scanner.scan_offline(limit=6, min_ev=0.0)
+            value_bets = report.value_bets
+        except Exception as e:
+            logger.error(f"Falha crítica no scan offline: {e}")
+            
+    logger.info(f"Modo do Dashboard: [{mode}]")
+    
     ev_rows = []
-    for m in rodada:
-        report = calculate_ev(m["probs"], m["odds"],
-                              m["home_team"], m["away_team"],
-                              min_ev_threshold=0.0)
-        for a in report.analyses:
-            ev_rows.append({
-                "partida": f"{m['home_team']}\nvs {m['away_team']}",
-                "resultado": a.label,
-                "model_pct": a.model_prob * 100,
-                "casa_pct":  a.implied_prob * 100,
-                "odd":       a.odd,
-                "ev":        a.ev * 100,
-                "kelly":     a.kelly_fraction * 100,
-                "is_value":  a.is_value,
-            })
+    for bet in value_bets:
+        ev_rows.append({
+            "partida": f"{bet.home_team}\nvs {bet.away_team}",
+            "resultado": bet.outcome_label,
+            "model_pct": bet.model_prob * 100,
+            "casa_pct":  bet.implied_prob * 100,
+            "odd":       bet.odds_taken,
+            "ev":        bet.ev_pct,
+            "kelly":     bet.stake_pct * 100,
+            "is_value":  bet.ev_pct > 0.0,
+        })
 
-    return pd.DataFrame(ev_rows)
+    return pd.DataFrame(ev_rows), mode == "AO VIVO"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -245,7 +249,8 @@ def run_ev_analysis():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_dashboard(df_raw: pd.DataFrame, ml_results: dict,
-                    calibration_data: dict, df_ev: pd.DataFrame):
+                    calibration_data: dict, df_ev: pd.DataFrame,
+                    is_live_data: bool):
 
     plt.rcParams.update({
         "font.family":       "DejaVu Sans",
@@ -283,6 +288,11 @@ def build_dashboard(df_raw: pd.DataFrame, ml_results: dict,
              color=CLR["text"])
     fig.text(0.5, 0.955, "Pipeline: ETL → Feature Engineering → ML (TimeSeriesSplit) → Expected Value",
              ha="center", va="top", fontsize=11, color=CLR["subtext"])
+             
+    import datetime
+    timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fig.text(0.97, 0.02, f"Gerado em: {timestamp_str}",
+             ha="right", va="bottom", fontsize=9, color=CLR["subtext"], style="italic")
 
     model_names   = list(ml_results.keys())
     model_colors  = [CLR["blue"], CLR["orange"]]
@@ -519,7 +529,8 @@ def build_dashboard(df_raw: pd.DataFrame, ml_results: dict,
     # ══════════════════════════════════════════════════════════════════════════
 
     ax_ev = fig.add_subplot(gs[4, :])
-    ax_ev.set_title("📊  Análise de Valor Esperado (EV) — Rodada Simulada", fontsize=12, pad=10)
+    ev_title = "📊  Análise de Valor Esperado (EV) — Mercado AO VIVO (Próximas 24h)" if is_live_data else "📊  Análise de Valor Esperado (EV) — Dados Históricos / Offline"
+    ax_ev.set_title(ev_title, fontsize=12, pad=10)
     ax_ev.set_facecolor(CLR["panel"])
     ax_ev.set_xticks([]); ax_ev.set_yticks([])
     for spine in ax_ev.spines.values():
@@ -605,13 +616,13 @@ def main():
     ml_results, calibration_data = run_training(df, n_splits=5)
 
     # 4. EV
-    df_ev = run_ev_analysis()
+    df_ev, is_live_data = run_ev_analysis()
 
     # 5. Dashboard
     logger.info("━" * 60)
     logger.info("ETAPA 5 — Gerando Dashboard")
     logger.info("━" * 60)
-    build_dashboard(df, ml_results, calibration_data, df_ev)
+    build_dashboard(df, ml_results, calibration_data, df_ev, is_live_data)
 
 
 if __name__ == "__main__":

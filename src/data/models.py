@@ -74,6 +74,35 @@ class MatchFeatures(Base):
         return f"<MatchFeatures(match_id={self.match_id})>"
 
 
+class CLVTracking(Base):
+    """
+    Tabela para rastreio do Closing Line Value (CLV).
+    """
+    __tablename__ = "clv_tracking"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    match_id = Column(Integer, nullable=True)
+    event_id = Column(String, nullable=True) # ID na The Odds API
+    home_team = Column(String)
+    away_team = Column(String)
+    commence_time = Column(String) # ISO date string
+    timestamp_captura = Column(DateTime)
+    
+    outcome = Column(String)
+    odd_capturada = Column(Float)
+    prob_modelo = Column(Float)
+    bookmaker_usado = Column(String)
+    
+    # Pinnacle closing lines
+    pinnacle_closing_odd = Column(Float, nullable=True)
+    
+    # CLV
+    clv_positivo = Column(Boolean, nullable=True)
+    
+    def __repr__(self):
+        return f"<CLVTracking(match_id={self.match_id}, outcome={self.outcome})>"
+
+
 def get_engine(db_path="sqlite:///understat_premier_league.db"):
     return create_engine(db_path)
 

@@ -127,7 +127,8 @@ def multiclass_brier_score(y_true: np.ndarray, y_prob: np.ndarray, classes: list
 
 # ── Definição dos modelos ─────────────────────────────────────────────────────
 
-def _build_models() -> dict[str, Pipeline]:
+from typing import Dict
+def _build_models() -> Dict[str, Pipeline]:
     """
     Retorna um dicionário com os pipelines de cada modelo.
 
