@@ -40,6 +40,7 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
@@ -348,9 +349,17 @@ def _rebuild_best_pipeline(params: dict) -> Pipeline:
     else:
         raise ValueError(f"Tipo de modelo desconhecido: {model_type}")
 
+    # Envolve o modelo base em calibração de probabilidades (Platt Scaling)
+    # Isso resolve o problema de 'overconfidence' e gera EVs mais realistas.
+    calibrated_clf = CalibratedClassifierCV(
+        estimator=clf,
+        method='sigmoid',
+        cv=5  # Usa 5-fold interno para calibrar sem viés
+    )
+
     return Pipeline([
         ("scaler", StandardScaler()),
-        ("clf", clf),
+        ("clf", calibrated_clf),
     ])
 
 

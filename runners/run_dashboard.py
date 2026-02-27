@@ -147,6 +147,7 @@ def run_training(df: pd.DataFrame, n_splits: int = 5):
     X = df[FEATURE_COLS].values
     y = df["target"].values
 
+    from sklearn.calibration import CalibratedClassifierCV
     models = {
         "Logistic Regression": Pipeline([
             ("scaler", StandardScaler()),
@@ -156,6 +157,14 @@ def run_training(df: pd.DataFrame, n_splits: int = 5):
             ("scaler", StandardScaler()),
             ("clf", RandomForestClassifier(n_estimators=300, max_depth=6, min_samples_leaf=10,
                                             class_weight="balanced", random_state=42, n_jobs=-1)),
+        ]),
+        "Calibrated LR": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", CalibratedClassifierCV(
+                estimator=LogisticRegression(solver="lbfgs", max_iter=1000, C=1.0, random_state=42),
+                method="sigmoid",
+                cv=3
+            )),
         ]),
     }
 
