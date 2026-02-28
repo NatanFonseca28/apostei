@@ -1,80 +1,100 @@
 import logging
 import sys
 
-from .data.extractor import DataExtractor
-from .data.feature_engineering import add_ewma_features
-from .data.models import create_tables, get_engine, get_session
-from .data.persistence import DataPersister, FeaturePersister
+from src.data.extractor import FlashscoreExtractor
+from src.data.models import create_tables, get_engine, get_session
+from src.data.persistence import DataPersister
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
 logger = logging.getLogger("Main")
 
+URLS = [
+    # "https://www.flashscore.com.br/futebol/espanha/laliga/#/dINOZk9Q/table/overall",
+    # "https://www.flashscore.com.br/futebol/inglaterra/premier-league/#/dINOZk9Q/table/overall",
+    # "https://www.flashscore.com.br/futebol/italia/serie-a/#/dINOZk9Q/table/overall",
+    # "https://www.flashscore.com.br/futebol/franca/ligue-1/#/WYO1P5ch/table/overall",
+    # "https://www.flashscore.com.br/futebol/arabia-saudita/divisao-1/#/IeULGOgm/table/overall",
+    # "https://www.flashscore.com.br/futebol/espanha/laliga2/#/YwFjV9Hs/table/overall",
+    # "https://www.flashscore.com.br/futebol/grecia/superliga/#/Y5PJdcC3/table/overall",
+    # "https://www.flashscore.com.br/futebol/indonesia/liga-1/#/IoZQW2N8/table/overall",
+    # "https://www.flashscore.com.br/futebol/israel/ligat-ha-al/#/ltpEOpgd/table/overall",
+    # "https://www.flashscore.com.br/futebol/turquia/super-lig/#/jy5jZF2o/table/overall",
+    # "https://www.flashscore.com.br/futebol/europa/liga-dos-campeoes/#/2oN82Fw5/table/overall",
+    # "https://www.flashscore.com.br/futebol/azerbaijao/primeira-liga/#/tOIX7uHc/table/overall",
+    # "https://www.flashscore.com.br/futebol/asia/liga-dos-campeoes-da-afc/#/4hWTXH4p/table/overall",
+    # "https://www.flashscore.com.br/futebol/egito/primeira-liga/#/GleLtG64/table/overall",
+    # "https://www.flashscore.com.br/futebol/inglaterra/2-divisao/#/2DgLvevA/table/overall",
+    # "https://www.flashscore.com.br/futebol/india/liga-indiana/#/MNsj6QO9/table/overall",
+    
+    # FOCO BRASIL, ESTADUAIS e SUL-AMERICA 
+    "https://www.flashscore.com.br/futebol/brasil/brasileirao-betano/#/6FygD4mG/table/overall",
+    "https://www.flashscore.com.br/futebol/america-do-sul/copa-libertadores/",
+    "https://www.flashscore.com.br/futebol/america-do-sul/copa-sul-americana/",
+    "https://www.flashscore.com.br/futebol/brasil/acreano",
+    "https://www.flashscore.com.br/futebol/brasil/alagoano",
+    "https://www.flashscore.com.br/futebol/brasil/amapaense",
+    "https://www.flashscore.com.br/futebol/brasil/amazonense",
+    "https://www.flashscore.com.br/futebol/brasil/baiano",
+    "https://www.flashscore.com.br/futebol/brasil/brasiliense",
+    "https://www.flashscore.com.br/futebol/brasil/capixabao-superbet",
+    "https://www.flashscore.com.br/futebol/brasil/carioca-superbet",
+    "https://www.flashscore.com.br/futebol/brasil/catarinense",
+    "https://www.flashscore.com.br/futebol/brasil/cearense-superbet",
+    "https://www.flashscore.com.br/futebol/brasil/gauchao-superbet",
+    "https://www.flashscore.com.br/futebol/brasil/goiano",
+    "https://www.flashscore.com.br/futebol/brasil/maranhense",
+    "https://www.flashscore.com.br/futebol/brasil/matogrossense",
+    "https://www.flashscore.com.br/futebol/brasil/mineiro",
+    "https://www.flashscore.com.br/futebol/brasil/paraense",
+    "https://www.flashscore.com.br/futebol/brasil/paraibano",
+    "https://www.flashscore.com.br/futebol/brasil/paranaense",
+    "https://www.flashscore.com.br/futebol/brasil/paulista",
+    "https://www.flashscore.com.br/futebol/brasil/pernambucano",
+    "https://www.flashscore.com.br/futebol/brasil/piauiense",
+    "https://www.flashscore.com.br/futebol/brasil/potiguar",
+    "https://www.flashscore.com.br/futebol/brasil/rondoniense",
+    "https://www.flashscore.com.br/futebol/brasil/roraimense",
+    "https://www.flashscore.com.br/futebol/brasil/sergipano-superbet",
+    "https://www.flashscore.com.br/futebol/brasil/sul-matogrossense",
+    "https://www.flashscore.com.br/futebol/brasil/tocantinense",
+]
 
 def main():
-    logger.info("Starting Apo$tei Data Pipeline (Hybrid: soccerdata + Understat)...")
+    logger.info("Starting Apo$tei Data Pipeline (Flashscore)...")
 
-    # 1. Setup Database
     logger.info("Initializing Database...")
-    db_path = "sqlite:///understat_premier_league.db"
+    db_path = "sqlite:///flashscore_data.db"
     engine = get_engine(db_path)
     create_tables(engine)
     Session = lambda: get_session(engine)
 
-    # 2. Components
-    extractor = DataExtractor()
+    extractor = FlashscoreExtractor()
     persister = DataPersister(Session)
-    feature_persister = FeaturePersister(Session)
-
-    # 3. Define Scope
-    START_YEAR = 2020
-    END_YEAR = 2024
-
-    logger.info(f"Target: EPL, Seasons: {START_YEAR}-{END_YEAR}")
 
     try:
-        # ── Step 1: Extract (Hybrid) ───────────────────────────────────────
-        logger.info("Step 1: Extracting data (MatchHistory + Understat)...")
-        df_rich = extractor.fetch_rich_dataset(START_YEAR, END_YEAR)
+        logger.info("Step 1: Extracting data (Flashscore)...")
+        df_rich = extractor.fetch_data(URLS)
 
         if df_rich.empty:
             logger.warning("No data extracted. Exiting.")
             return
 
-        logger.info(f"Extracted {len(df_rich)} matches total.")
-
-        # ── Step 2: Load (Upsert rich matches with xG + odds) ─────────────
-        logger.info("Step 2: Persisting rich match data (xG + odds)...")
+        logger.info("Step 2: Persisting match data...")
         saved_count = persister.save_matches(df_rich)
-        logger.info(f"Saved/updated {saved_count} match records.")
 
-        # ── Step 3: Feature Engineering ────────────────────────────────────
-        logger.info("Step 3: Computing EWMA rolling features...")
+        # TODO: ML and Predictive Analysis features mapped to Flashscore metrics
+        logger.info("Step 3: Feature Engineering and ML predictions are pending adaptation to new schema.")
+        
+        # Save to raw csv as user requested in original script
+        df_rich.to_csv("dados_futebol.csv", index=False, encoding="utf-8")
+        logger.info("Saved raw CSV to dados_futebol.csv")
 
-        # 3a. Carrega todos os jogos do banco em ordem cronológica
-        df_matches = persister.load_as_dataframe(engine)
-
-        # 3b. Aplica EWMA com shift(1) — sem data leakage
-        df_features = add_ewma_features(df_matches)
-
-        # 3c. Persiste as features na tabela match_features
-        features_saved = feature_persister.save_features(df_features)
-        logger.info(f"Rolling features salvas: {features_saved} registros em match_features.")
-
-        # ── Summary ────────────────────────────────────────────────────────
-        n_odds = df_rich["odds_home_avg"].notna().sum() if "odds_home_avg" in df_rich.columns else 0
-        n_xg = df_rich["home_xG"].notna().sum() if "home_xG" in df_rich.columns else 0
         logger.info("=" * 60)
-        logger.info(f"Pipeline completed successfully!")
-        logger.info(f"  Total matches: {saved_count}")
-        logger.info(f"  With xG data:  {n_xg}")
-        logger.info(f"  With odds:     {n_odds}")
-        logger.info(f"  With features: {features_saved}")
+        logger.info(f"Pipeline completed successfully! Total matches saved: {saved_count}")
         logger.info("=" * 60)
 
     except Exception as e:
         logger.error(f"Pipeline failed: {e}", exc_info=True)
-
 
 if __name__ == "__main__":
     main()

@@ -1,10 +1,16 @@
 import streamlit as st
 import pandas as pd
 import logging
+import os
+from dotenv import load_dotenv
 
 # Configuração de logging básico
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Carregar variáveis de ambiente
+load_dotenv()
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 
 # Configuração da página
 st.set_page_config(
@@ -33,7 +39,7 @@ league_options = {
 selected_league_names = st.sidebar.multiselect(
     "Ligas Alvo",
     options=list(league_options.keys()),
-    default=['Premier League'],
+    default=['Brasileirão Série A'],
     help="Selecione as ligas para escanear oportunidades."
 )
 
@@ -76,35 +82,37 @@ if st.button("🚀 Iniciar Análise Real (Live Market)", type="primary", use_con
     
     # Validações
     if not api_key:
-        st.error("❌ Erro: Insira a chave da API (The Odds API Key) na barra lateral antes de iniciar.")
-        st.stop()
+        api_key = ODDS_API_KEY
+        if not api_key:
+            st.error("❌ Erro: Chave da API (The Odds API) ausente na barra lateral ou no .env.")
+            st.stop()
     
     if not selected_leagues:
-        st.error("❌ Erro: Selecione pelo menos uma liga na barra lateral.")
-        st.stop()
+        selected_leagues = list(league_options.values())
+        st.info("ℹ️ Nenhuma liga selecionada. Escaneando todas as habilitadas por padrão.")
     
     # IMPORT ATRASADO (Late Import): Evita que o Streamlit demore a carregar a UI inicial
     with st.spinner('⚙️ Carregando motor de IA e Scanner...'):
         from src.ml.pregame_scanner import PregameScanner
     
     scanner = PregameScanner(
-        db_path="sqlite:///understat_premier_league.db",
+        db_path="sqlite:///flashscore_data.db",
         odds_api_key=api_key
     )
     
     try:
         with st.spinner(f'🚀 Buscando odds para {len(selected_leagues)} ligas e rodando inferência...'):
-            # Predição para os próximos 7 dias (168h)
+            # Predição para os próximos 14 dias (336h)
             report = scanner.scan(
                 min_ev=min_ev_pct / 100.0, 
                 bankroll=bankroll,
                 leagues=selected_leagues,
-                hours_window=168.0, 
+                hours_window=336.0, 
                 odds_source="pinnacle"
             )
         
         if not report.value_bets:
-            st.warning(f"⚠️ Nenhuma oportunidade de Valor Esperado (EV > {min_ev_pct}%) encontrada para os próximos 7 dias.")
+            st.warning(f"⚠️ Nenhuma oportunidade de Valor Esperado (EV > {min_ev_pct}%) encontrada para os próximos 14 dias.")
         else:
             st.success(f"✅ Análise concluída! Encontramos {len(report.value_bets)} oportunidades de valor.")
             
@@ -122,14 +130,26 @@ if st.button("🚀 Iniciar Análise Real (Live Market)", type="primary", use_con
             # ── 2. PREPARAÇÃO DO DATAFRAME ─────────────────────────────────────
             data_rows = []
             for bet in report.value_bets:
+                # Formata estatisticas base
+                stats = "N/A"
+                if bet.home_features and bet.away_features:
+                    hgf = bet.home_features.get('media_marcados_casa', '-')
+                    hgs = bet.home_features.get('media_sofridos_casa', '-')
+                    agf = bet.away_features.get('media_marcados_fora', '-')
+                    ags = bet.away_features.get('media_sofridos_fora', '-')
+                    stats = f"C(G:{hgf}/S:{hgs}) | V(G:{agf}/S:{ags})"
+                
                 data_rows.append({
                     "Partida": f"{bet.home_team} vs {bet.away_team}",
-                    "Resultado": bet.outcome_label,
-                    "Modelo %": bet.model_prob * 100,
-                    "Casa %": bet.implied_prob * 100,
-                    "Odd": bet.odds_taken,
-                    "EV": bet.ev_pct,
-                    "Stake Sugerida": bet.stake_amount
+                    "Data": bet.commence_time,
+                    "Aposta": bet.outcome_label,
+                    "Oportunidade (%)": bet.model_prob * 100,
+                    "Casa (%)": bet.implied_prob * 100,
+                    "Odd (Valor)": bet.odds_taken,
+                    "EV Extra (%)": bet.ev_pct,
+                    "$$ Stake (R$)": bet.stake_amount,
+                    "Base de Dados (Média de Gols)": stats,
+                    "Palpite da IA (Gemini)": bet.ai_insight
                 })
             
             df = pd.DataFrame(data_rows)
@@ -139,15 +159,15 @@ if st.button("🚀 Iniciar Análise Real (Live Market)", type="primary", use_con
                 return 'color: #00c853; font-weight: bold'
 
             styled_df = df.style.format({
-                "Modelo %": "{:.1f}%",
-                "Casa %": "{:.1f}%",
-                "Odd": "{:.2f}",
-                "EV": "{:+.1f}%",
-                "Stake Sugerida": "R$ {:.2f}"
-            }).map(style_ev, subset=['EV'])
+                "Oportunidade (%)": "{:.1f}%",
+                "Casa (%)": "{:.1f}%",
+                "Odd (Valor)": "{:.2f}",
+                "EV Extra (%)": "{:+.1f}%",
+                "$$ Stake (R$)": "R$ {:.2f}"
+            }).map(style_ev, subset=['EV Extra (%)'])
 
             # Exibição
-            st.subheader("📊 Oportunidades de Valor Identificadas (Próximos 7 Dias)")
+            st.subheader("📊 Oportunidades de Valor Identificadas (Próximos 14 Dias)")
             st.dataframe(
                 styled_df,
                 use_container_width=True,

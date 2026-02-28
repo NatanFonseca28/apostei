@@ -37,6 +37,11 @@ from src.data.models import get_engine
 from .trainer import CLASSES, FEATURE_COLS
 from src.core.staking import StakingConfig, CONSERVATIVE, MODERATE, fractional_kelly
 
+try:
+    from src.core.ai import AIBettingAgent
+except ImportError:
+    AIBettingAgent = None
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -81,6 +86,38 @@ _API_TEAM_MAP = {
     "West Bromwich Albion":        "West Bromwich Albion",
     "West Ham United":             "West Ham",
     "Wolverhampton Wanderers":     "Wolverhampton Wanderers",
+
+    # Brasil (Série A / Série B)
+    "Athletico Paranaense":        "Athletico-PR",
+    "Atletico Goianiense":         "Atlético-GO",
+    "Atletico Mineiro":            "Atlético-MG",
+    "Bahia":                       "Bahia",
+    "Botafogo":                    "Botafogo",
+    "Botafogo RJ":                 "Botafogo",
+    "Bragantino":                  "Red Bull Bragantino",
+    "Ceara":                       "Ceará",
+    "Chapecoense":                 "Chapecoense",
+    "Corinthians":                 "Corinthians",
+    "Coritiba":                    "Coritiba",
+    "Criciuma":                    "Criciúma",
+    "Cruzeiro":                    "Cruzeiro",
+    "Cuiaba":                      "Cuiabá",
+    "Flamengo":                    "Flamengo",
+    "Flamengo RJ":                 "Flamengo",
+    "Fluminense":                  "Fluminense",
+    "Fortaleza EC":                "Fortaleza",
+    "Fortaleza":                   "Fortaleza",
+    "Gremio":                      "Grêmio",
+    "Internacional":               "Internacional",
+    "Juventude":                   "Juventude",
+    "Mirassol":                    "Mirassol",
+    "Palmeiras":                   "Palmeiras",
+    "Red Bull Bragantino":         "Red Bull Bragantino",
+    "Santos":                      "Santos",
+    "Sao Paulo":                   "São Paulo",
+    "Sport Recife":                "Sport",
+    "Vasco da Gama":               "Vasco",
+    "Vitoria":                     "Vitória",
 }
 
 
@@ -145,6 +182,9 @@ class ScanResult:
 
     # Features usadas
     features_available: bool
+    home_features: dict[str, float] = field(default_factory=dict)
+    away_features: dict[str, float] = field(default_factory=dict)
+    ai_insight: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -234,6 +274,14 @@ class PregameScanner:
         self.selected_features = self.artifact["selected_features"]
         self.classes = self.artifact.get("classes", CLASSES)
         self.model_path = str(model_path) if model_path else "auto"
+        
+        # Init AI Agent
+        self.ai_agent = None
+        if AIBettingAgent:
+            try:
+                self.ai_agent = AIBettingAgent()
+            except Exception as e:
+                logger.warning(f"AI Agent indisponível: {e}")
 
         logger.info(
             f"PregameScanner inicializado | "
@@ -288,14 +336,11 @@ class PregameScanner:
         """
         query = """
             SELECT
-                m.id, m.date, m.home_team, m.away_team,
-                f.ewma5_xg_pro_home,  f.ewma10_xg_pro_home,
-                f.ewma5_xg_con_home,  f.ewma10_xg_con_home,
-                f.ewma5_xg_pro_away,  f.ewma10_xg_pro_away,
-                f.ewma5_xg_con_away,  f.ewma10_xg_con_away
-            FROM matches m
-            INNER JOIN match_features f ON m.id = f.match_id
-            ORDER BY m.date DESC
+                id, data as date, time_casa as home_team, time_fora as away_team,
+                media_marcados_casa, media_sofridos_casa,
+                media_marcados_fora, media_sofridos_fora
+            FROM flashscore_matches
+            ORDER BY data DESC
         """
         df = pd.read_sql(query, self.engine, parse_dates=["date"])
         logger.info(f"Carregadas {len(df)} partidas com features do banco")
@@ -331,16 +376,12 @@ class PregameScanner:
             return None
         away_row = away_matches.iloc[0]
 
-        # Monta vetor completo (8 features)
+        # Monta vetor completo
         full_vector = {
-            "ewma5_xg_pro_home":  home_row["ewma5_xg_pro_home"],
-            "ewma10_xg_pro_home": home_row["ewma10_xg_pro_home"],
-            "ewma5_xg_con_home":  home_row["ewma5_xg_con_home"],
-            "ewma10_xg_con_home": home_row["ewma10_xg_con_home"],
-            "ewma5_xg_pro_away":  away_row["ewma5_xg_pro_away"],
-            "ewma10_xg_pro_away": away_row["ewma10_xg_pro_away"],
-            "ewma5_xg_con_away":  away_row["ewma5_xg_con_away"],
-            "ewma10_xg_con_away": away_row["ewma10_xg_con_away"],
+            "media_marcados_casa":  home_row["media_marcados_casa"],
+            "media_sofridos_casa":  home_row["media_sofridos_casa"],
+            "media_marcados_fora":  away_row["media_marcados_fora"],
+            "media_sofridos_fora":  away_row["media_sofridos_fora"],
         }
 
         # Verifica NaNs
@@ -523,6 +564,7 @@ class PregameScanner:
 
         # Filtra por janela de tempo
         now = datetime.utcnow()
+        start_window = now - timedelta(hours=3) # Permite jogos que comecaram nas ultimas 3h
         cutoff = now + timedelta(hours=hours_window)
 
         filtered_events = []
@@ -530,13 +572,12 @@ class PregameScanner:
             try:
                 ct = datetime.fromisoformat(ev.commence_time.replace("Z", "+00:00"))
                 ct_naive = ct.replace(tzinfo=None)
-                if now <= ct_naive <= cutoff:
+                if start_window <= ct_naive <= cutoff:
                     filtered_events.append(ev)
             except (ValueError, TypeError):
                 filtered_events.append(ev)  # Se nao parsear, inclui
 
         logger.info(f"  Eventos consolidados na janela de {hours_window}h: {len(filtered_events)}/{len(all_live_events)}")
-
         # ── 2. Features do banco ─────────────────────────────────────────────
         logger.info("\n[2/4] Carregando features do banco local...")
         all_matches = self.get_team_features()
@@ -545,6 +586,7 @@ class PregameScanner:
         logger.info("\n[3/4] Rodando inferencia do modelo...")
         value_bets: list[ScanResult] = []
         events_matched = 0
+        ai_cache_per_match = {}
 
         for event in filtered_events:
             # Constroi features
@@ -595,9 +637,6 @@ class PregameScanner:
                 edge = prob - implied
                 ev = (prob * odd) - 1.0
 
-                if ev < min_ev:
-                    continue
-
                 # Kelly
                 b = odd - 1.0
                 kelly_full = max(0.0, (b * prob - (1 - prob)) / b)
@@ -606,9 +645,54 @@ class PregameScanner:
 
                 if stake_pct < config.min_stake_pct:
                     stake_pct = 0.0
-
+                
                 stake_amount = round(stake_pct * bankroll, 2)
+                
+                # Vamos manter todos os resultados independente do EV,
+                # para que o usuario veja todas as partidas.
+                is_value_bet = ev >= min_ev
 
+                
+                # Coleta as stats
+                # Reconstroi o full_vector (já que o build_feature_vector retornava np.array)
+                # Vamos simplificar e puxar do df
+                home_feats = {}
+                away_feats = {}
+                try:
+                    h_matches = all_matches[all_matches["home_team"] == event.home_team]
+                    a_matches = all_matches[all_matches["away_team"] == event.away_team]
+                    if not h_matches.empty:
+                        home_feats = {
+                            "media_marcados_casa": round(h_matches.iloc[0]["media_marcados_casa"], 2),
+                            "media_sofridos_casa": round(h_matches.iloc[0]["media_sofridos_casa"], 2),
+                        }
+                    if not a_matches.empty:
+                        away_feats = {
+                            "media_marcados_fora": round(a_matches.iloc[0]["media_marcados_fora"], 2),
+                            "media_sofridos_fora": round(a_matches.iloc[0]["media_sofridos_fora"], 2),
+                        }
+                except Exception:
+                    pass
+                # Tenta gerar insight IA cacheado por partida 
+                # para nao chamar o modelo 3x (H, D, A) para o mesmo jogo
+                insight_text = ""
+                if self.ai_agent:
+                    if event.event_id in ai_cache_per_match:
+                        insight_text = ai_cache_per_match[event.event_id]
+                    else:
+                        # Encontra o label do evento mais provavel (favorito do mercado)
+                        best_outcome = max(prob_map, key=prob_map.get)
+                        mock_match_data = {
+                            "home_team": event.home_team,
+                            "away_team": event.away_team,
+                            "outcome_label": OUTCOME_LABELS.get(best_outcome, best_outcome),
+                            "ev_pct": round(ev * 100, 2), # Pode irrelevante pela mudanca do prompt, mas mantem struct
+                            "model_prob": prob_map[best_outcome],
+                            "features": {**home_feats, **away_feats}
+                        }
+                        insight_text = self.ai_agent.generate_insight(mock_match_data)
+                        ai_cache_per_match[event.event_id] = insight_text
+                
                 value_bets.append(ScanResult(
                     match_id=match_id,
                     event_id=event.event_id,
@@ -630,6 +714,9 @@ class PregameScanner:
                     stake_pct=round(stake_pct, 4),
                     stake_amount=stake_amount,
                     features_available=True,
+                    home_features=home_feats,
+                    away_features=away_feats,
+                    ai_insight=insight_text
                 ))
 
         # Ordena por EV descendente
@@ -690,21 +777,17 @@ class PregameScanner:
         logger.info(f"  EV minimo: {min_ev*100:.1f}% | Banca: ${bankroll:,.2f}")
 
         # Carrega jogos com features e odds
-        where_season = f"AND m.season = {season}" if season else ""
+        where_season = f"AND campeonato LIKE '%{season}%'" if season else ""
         query = f"""
             SELECT
-                m.id, m.date, m.home_team, m.away_team, m.season,
-                m.home_goals, m.away_goals,
-                m.odds_home_b365, m.odds_draw_b365, m.odds_away_b365,
-                f.ewma5_xg_pro_home,  f.ewma10_xg_pro_home,
-                f.ewma5_xg_con_home,  f.ewma10_xg_con_home,
-                f.ewma5_xg_pro_away,  f.ewma10_xg_pro_away,
-                f.ewma5_xg_con_away,  f.ewma10_xg_con_away
-            FROM matches m
-            INNER JOIN match_features f ON m.id = f.match_id
-            WHERE m.odds_home_b365 IS NOT NULL
+                id, data as date, time_casa as home_team, time_fora as away_team,
+                placar_casa as home_goals, placar_fora as away_goals,
+                media_marcados_casa, media_sofridos_casa,
+                media_marcados_fora, media_sofridos_fora
+            FROM flashscore_matches
+            WHERE data IS NOT NULL
               {where_season}
-            ORDER BY m.date DESC
+            ORDER BY data DESC
             LIMIT {limit}
         """
         df = pd.read_sql(query, self.engine, parse_dates=["date"])
@@ -730,9 +813,9 @@ class PregameScanner:
             prob_map = {cls: float(probs_array[i]) for i, cls in enumerate(self.classes)}
 
             odds = {
-                "H": float(row["odds_home_b365"]),
-                "D": float(row["odds_draw_b365"]),
-                "A": float(row["odds_away_b365"]),
+                "H": 1.0, # NO ODDS IN DB ANYMORE WITH FLASHSCORE
+                "D": 1.0,
+                "A": 1.0,
             }
 
             if not all(o > 1.0 for o in odds.values()):

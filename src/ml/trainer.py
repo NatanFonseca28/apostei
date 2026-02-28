@@ -42,14 +42,10 @@ logger = logging.getLogger(__name__)
 # ── Constantes ────────────────────────────────────────────────────────────────
 
 FEATURE_COLS = [
-    "ewma5_xg_pro_home",
-    "ewma10_xg_pro_home",
-    "ewma5_xg_con_home",
-    "ewma10_xg_con_home",
-    "ewma5_xg_pro_away",
-    "ewma10_xg_pro_away",
-    "ewma5_xg_con_away",
-    "ewma10_xg_con_away",
+    "media_marcados_casa",
+    "media_sofridos_casa",
+    "media_marcados_fora",
+    "media_sofridos_fora",
 ]
 
 # Ordem canônica das classes — mantida consistente em todo o pipeline
@@ -68,21 +64,17 @@ def load_dataset(engine) -> pd.DataFrame:
     """
     query = """
         SELECT
-            m.id,
-            m.date,
-            m.home_goals,
-            m.away_goals,
-            f.ewma5_xg_pro_home,
-            f.ewma10_xg_pro_home,
-            f.ewma5_xg_con_home,
-            f.ewma10_xg_con_home,
-            f.ewma5_xg_pro_away,
-            f.ewma10_xg_pro_away,
-            f.ewma5_xg_con_away,
-            f.ewma10_xg_con_away
-        FROM matches m
-        INNER JOIN match_features f ON m.id = f.match_id
-        ORDER BY m.date ASC
+            id,
+            data as date,
+            placar_casa as home_goals,
+            placar_fora as away_goals,
+            media_marcados_casa,
+            media_sofridos_casa,
+            media_marcados_fora,
+            media_sofridos_fora
+        FROM flashscore_matches
+        WHERE placar_casa IS NOT NULL AND placar_fora IS NOT NULL
+        ORDER BY date ASC
     """
     df = pd.read_sql(query, engine, parse_dates=["date"])
 

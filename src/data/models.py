@@ -1,115 +1,49 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Column, DateTime, Float, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 Base = declarative_base()
 
+class FlashscoreMatch(Base):
+    __tablename__ = "flashscore_matches"
 
-class Match(Base):
-    __tablename__ = "matches"
-
-    id = Column(Integer, primary_key=True)  # Understat match ID
-    league = Column(String)
-    season = Column(Integer)
-    date = Column(DateTime)
-    home_team = Column(String)
-    away_team = Column(String)
-    home_goals = Column(Integer)
-    away_goals = Column(Integer)
-    home_xG = Column(Float)
-    away_xG = Column(Float)
-    is_result = Column(Boolean)
-
-    # Stats de jogo (football-data.co.uk)
-    home_shots = Column(Float)
-    away_shots = Column(Float)
-    home_shots_target = Column(Float)
-    away_shots_target = Column(Float)
-
-    # Odds -- Bet365
-    odds_home_b365 = Column(Float)
-    odds_draw_b365 = Column(Float)
-    odds_away_b365 = Column(Float)
-
-    # Odds -- Pinnacle (sharp / referencia)
-    odds_home_pin = Column(Float)
-    odds_draw_pin = Column(Float)
-    odds_away_pin = Column(Float)
-
-    # Odds -- Media do mercado
-    odds_home_avg = Column(Float)
-    odds_draw_avg = Column(Float)
-    odds_away_avg = Column(Float)
-
-    # Odds -- Maxima do mercado (best available)
-    odds_home_max = Column(Float)
-    odds_draw_max = Column(Float)
-    odds_away_max = Column(Float)
-
-    def __repr__(self):
-        return f"<Match(id={self.id}, {self.home_team} vs {self.away_team}, Season={self.season})>"
-
-
-class MatchFeatures(Base):
-    """
-    Armazena as Rolling Features (EWMA) calculadas por jogo.
-    Relação 1-para-1 com a tabela matches via match_id.
-    """
-    __tablename__ = "match_features"
-
-    match_id = Column(Integer, ForeignKey("matches.id"), primary_key=True)
-
-    # EWMA do time mandante
-    ewma5_xg_pro_home  = Column(Float)   # EWMA-5  xG produzido (ataque) — mandante
-    ewma10_xg_pro_home = Column(Float)   # EWMA-10 xG produzido (ataque) — mandante
-    ewma5_xg_con_home  = Column(Float)   # EWMA-5  xG concedido (defesa) — mandante
-    ewma10_xg_con_home = Column(Float)   # EWMA-10 xG concedido (defesa) — mandante
-
-    # EWMA do time visitante
-    ewma5_xg_pro_away  = Column(Float)   # EWMA-5  xG produzido (ataque) — visitante
-    ewma10_xg_pro_away = Column(Float)   # EWMA-10 xG produzido (ataque) — visitante
-    ewma5_xg_con_away  = Column(Float)   # EWMA-5  xG concedido (defesa) — visitante
-    ewma10_xg_con_away = Column(Float)   # EWMA-10 xG concedido (defesa) — visitante
-
-    def __repr__(self):
-        return f"<MatchFeatures(match_id={self.match_id})>"
-
-
-class CLVTracking(Base):
-    """
-    Tabela para rastreio do Closing Line Value (CLV).
-    """
-    __tablename__ = "clv_tracking"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    match_id = Column(Integer, nullable=True)
-    event_id = Column(String, nullable=True) # ID na The Odds API
-    home_team = Column(String)
-    away_team = Column(String)
-    commence_time = Column(String) # ISO date string
-    timestamp_captura = Column(DateTime)
+    id = Column(String, primary_key=True) 
+    campeonato = Column(String)
+    status = Column(String)
+    data = Column(DateTime, nullable=True) # Data da partida
     
-    outcome = Column(String)
-    odd_capturada = Column(Float)
-    prob_modelo = Column(Float)
-    bookmaker_usado = Column(String)
+    placar_casa = Column(Integer, nullable=True)
+    placar_fora = Column(Integer, nullable=True)
     
-    # Pinnacle closing lines
-    pinnacle_closing_odd = Column(Float, nullable=True)
+    time_casa = Column(String)
+    jogos_casa = Column(Integer)
+    gols_marcados_casa = Column(Integer)
+    gols_sofridos_casa = Column(Integer)
+    media_marcados_casa = Column(Float)
+    media_sofridos_casa = Column(Float)
     
-    # CLV
-    clv_positivo = Column(Boolean, nullable=True)
+    time_fora = Column(String)
+    jogos_fora = Column(Integer)
+    gols_marcados_fora = Column(Integer)
+    gols_sofridos_fora = Column(Integer)
+    media_marcados_fora = Column(Float)
+    media_sofridos_fora = Column(Float)
+    
+    ofensividade_casa = Column(String)
+    defensividade_casa = Column(String)
+    ofensividade_fora = Column(String)
+    defensividade_fora = Column(String)
+    
+    probabilidade_gol = Column(String)
+    melhor_chance = Column(String)
     
     def __repr__(self):
-        return f"<CLVTracking(match_id={self.match_id}, outcome={self.outcome})>"
+        return f"<FlashscoreMatch({self.time_casa} vs {self.time_fora})>"
 
-
-def get_engine(db_path="sqlite:///understat_premier_league.db"):
+def get_engine(db_path="sqlite:///flashscore_data.db"):
     return create_engine(db_path)
-
 
 def create_tables(engine):
     Base.metadata.create_all(engine)
-
 
 def get_session(engine):
     Session = sessionmaker(bind=engine)
