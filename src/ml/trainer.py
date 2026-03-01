@@ -119,34 +119,44 @@ def multiclass_brier_score(y_true: np.ndarray, y_prob: np.ndarray, classes: list
 
 # ── Definição dos modelos ─────────────────────────────────────────────────────
 
+from sklearn.calibration import CalibratedClassifierCV
 from typing import Dict
+
 def _build_models() -> Dict[str, Pipeline]:
     """
     Retorna um dicionário com os pipelines de cada modelo.
-
-    LogisticRegression:  necessita de StandardScaler (sensível à escala).
-    RandomForest:        invariante à escala; scaler mantido por consistência.
+    Todos os modelos base são envolvidos em CalibratedClassifierCV (Platt Scaling)
+    para garantir que o Log Loss reportado reflita as probabilidades reais de mercado.
     """
+    # Instancia os classificadores base
+    lr_base = LogisticRegression(
+        solver="lbfgs",
+        max_iter=1000,
+        C=1.0,
+        random_state=42,
+    )
+
+    rf_base = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=6,
+        min_samples_leaf=10,
+        class_weight="balanced",
+        random_state=42,
+        n_jobs=-1,
+    )
+
+    # Envolve com o calibrador (cv=3 é usado para evitar erros em folds pequenos)
+    calibrated_lr = CalibratedClassifierCV(estimator=lr_base, method='sigmoid', cv=3)
+    calibrated_rf = CalibratedClassifierCV(estimator=rf_base, method='sigmoid', cv=3)
+
     return {
         "LogisticRegression": Pipeline([
             ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(
-                solver="lbfgs",
-                max_iter=1000,
-                C=1.0,
-                random_state=42,
-            )),
+            ("clf", calibrated_lr),
         ]),
         "RandomForest": Pipeline([
             ("scaler", StandardScaler()),
-            ("clf", RandomForestClassifier(
-                n_estimators=300,
-                max_depth=6,
-                min_samples_leaf=10,
-                class_weight="balanced",
-                random_state=42,
-                n_jobs=-1,
-            )),
+            ("clf", calibrated_rf),
         ]),
     }
 

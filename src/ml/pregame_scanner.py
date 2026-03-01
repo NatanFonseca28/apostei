@@ -495,6 +495,7 @@ class PregameScanner:
         bookmakers_to_fetch: list[str] | None = None,
         hours_window: float = 24.0,
         use_best_odds: bool = False,
+        progress_callback: callable = None,
     ) -> ScanReport:
         """
         Executa o escaneamento completo pre-jogo para múltiplas ligas.
@@ -673,25 +674,59 @@ class PregameScanner:
                         }
                 except Exception:
                     pass
-                # Tenta gerar insight IA cacheado por partida 
-                # para nao chamar o modelo 3x (H, D, A) para o mesmo jogo
+                # Tenta gerar insight IA cacheado por partida e outcome
                 insight_text = ""
-                if self.ai_agent:
-                    if event.event_id in ai_cache_per_match:
-                        insight_text = ai_cache_per_match[event.event_id]
+                if self.ai_agent and is_value_bet:
+                    cache_key = f"{event.event_id}_{outcome}"
+                    
+                    # 1. TENTA BUSCAR NO DB (Cache persistente)
+                    from src.data.models import get_session, AIPredictionCache
+                    
+                    session = get_session(self.engine)
+                    cached_prediction = session.query(AIPredictionCache).filter_by(id=cache_key).first()
+                    
+                    if cached_prediction:
+                        insight_text = cached_prediction.insight_text
+                        logger.debug(f"IA Cache HIT no DB para {cache_key}")
                     else:
-                        # Encontra o label do evento mais provavel (favorito do mercado)
-                        best_outcome = max(prob_map, key=prob_map.get)
                         mock_match_data = {
                             "home_team": event.home_team,
                             "away_team": event.away_team,
-                            "outcome_label": OUTCOME_LABELS.get(best_outcome, best_outcome),
-                            "ev_pct": round(ev * 100, 2), # Pode irrelevante pela mudanca do prompt, mas mantem struct
-                            "model_prob": prob_map[best_outcome],
+                            "outcome_label": OUTCOME_LABELS.get(outcome, outcome),
+                            "ev_pct": round(ev * 100, 2),
+                            "model_prob": prob,
+                            "odds_taken": odd,
+                            "implied_prob": implied,
                             "features": {**home_feats, **away_feats}
                         }
+                        # 2. SE NÃO ACHOU, CHAMA A IA E SALVA NO DB
                         insight_text = self.ai_agent.generate_insight(mock_match_data)
-                        ai_cache_per_match[event.event_id] = insight_text
+                        
+                        # Evita gravar lixo no cache caso ocorra erro na rede, rate limit, ou parse da API
+                        if insight_text and not insight_text.startswith("Erro") and "API do Google Ocupada" not in insight_text and "A IA não retornou o Padrão JSON esperado" not in insight_text:
+                            try:
+                                new_cache = AIPredictionCache(
+                                    id=cache_key,
+                                    event_id=event.event_id,
+                                    home_team=event.home_team,
+                                    away_team=event.away_team,
+                                    outcome=outcome,
+                                    insight_text=insight_text,
+                                    created_at=datetime.utcnow()
+                                )
+                                session.merge(new_cache)
+                                session.commit()
+                                logger.info(f"IA Insight gerado e salvo no DB (Cache) para {cache_key}")
+                            except Exception as e:
+                                logger.error(f"Erro ao salvar cache de IA no SQLite: {e}")
+                                session.rollback()
+                            finally:
+                                session.close()
+                        else:
+                            logger.warning(f"Insight não cacheado devido a erro de API: {insight_text[:50]}...")
+                            session.close()
+                elif not is_value_bet:
+                    insight_text = "Sem valor matemático no mercado para esta odd. Ficar de fora."
                 
                 value_bets.append(ScanResult(
                     match_id=match_id,
@@ -718,6 +753,9 @@ class PregameScanner:
                     away_features=away_feats,
                     ai_insight=insight_text
                 ))
+
+            if progress_callback:
+                progress_callback(value_bets, events_matched, len(filtered_events))
 
         # Ordena por EV descendente
         value_bets.sort(key=lambda x: x.ev, reverse=True)

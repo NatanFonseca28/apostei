@@ -60,7 +60,8 @@ ARTIFACTS_DIR = Path("artifacts")
 def _suggest_model(trial: "optuna.Trial") -> Pipeline:
     """
     Optuna sugere o tipo de modelo E os hiperparâmetros correspondentes.
-    Retorna um Pipeline sklearn pronto para .fit().
+    O classificador sugerido é IMEDIATAMENTE envolvido em um calibrador de probabilidades
+    antes de ser retornado no Pipeline. Isso garante que o Optuna otimize o Log Loss real.
     """
     model_type = trial.suggest_categorical(
         "model_type", ["LogisticRegression", "RandomForest", "GradientBoosting"]
@@ -69,15 +70,13 @@ def _suggest_model(trial: "optuna.Trial") -> Pipeline:
     if model_type == "LogisticRegression":
         C = trial.suggest_float("lr_C", 1e-3, 100.0, log=True)
         solver = trial.suggest_categorical("lr_solver", ["lbfgs", "saga"])
-
         clf = LogisticRegression(
             C=C,
             solver=solver,
-            l1_ratio=0,  # equivalente a penalty='l2' (sem deprecation warning)
+            l1_ratio=0,  
             max_iter=2000,
             random_state=42,
         )
-
     elif model_type == "RandomForest":
         n_estimators = trial.suggest_int("rf_n_estimators", 100, 800, step=50)
         max_depth = trial.suggest_int("rf_max_depth", 3, 15)
@@ -86,7 +85,6 @@ def _suggest_model(trial: "optuna.Trial") -> Pipeline:
         max_features = trial.suggest_categorical(
             "rf_max_features", ["sqrt", "log2", None]
         )
-
         clf = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -97,14 +95,12 @@ def _suggest_model(trial: "optuna.Trial") -> Pipeline:
             random_state=42,
             n_jobs=-1,
         )
-
     else:  # GradientBoosting
         n_estimators = trial.suggest_int("gb_n_estimators", 100, 600, step=50)
         learning_rate = trial.suggest_float("gb_learning_rate", 0.01, 0.3, log=True)
         max_depth = trial.suggest_int("gb_max_depth", 2, 10)
         subsample = trial.suggest_float("gb_subsample", 0.6, 1.0)
         min_samples_leaf = trial.suggest_int("gb_min_samples_leaf", 5, 50)
-
         clf = GradientBoostingClassifier(
             n_estimators=n_estimators,
             learning_rate=learning_rate,
@@ -113,10 +109,13 @@ def _suggest_model(trial: "optuna.Trial") -> Pipeline:
             min_samples_leaf=min_samples_leaf,
             random_state=42,
         )
-
+    
+    # Aplica o Platt Scaling (Sigmoid) com cv=3 para validação cruzada aninhada
+    calibrated_clf = CalibratedClassifierCV(estimator=clf, method='sigmoid', cv=3)
+    
     return Pipeline([
         ("scaler", StandardScaler()),
-        ("clf", clf),
+        ("clf", calibrated_clf),
     ])
 
 

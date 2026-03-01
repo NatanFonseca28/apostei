@@ -39,6 +39,20 @@ class FlashscoreMatch(Base):
     def __repr__(self):
         return f"<FlashscoreMatch({self.time_casa} vs {self.time_fora})>"
 
+class AIPredictionCache(Base):
+    __tablename__ = "ai_predictions_cache"
+
+    id = Column(String, primary_key=True) # event_id + outcome ex: "bdab12f_H"
+    event_id = Column(String)
+    home_team = Column(String)
+    away_team = Column(String)
+    outcome = Column(String)
+    insight_text = Column(String)
+    created_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<AIPredictionCache({self.id})>"
+
 def get_engine(db_path="sqlite:///flashscore_data.db"):
     return create_engine(db_path)
 

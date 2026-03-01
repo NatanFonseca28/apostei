@@ -1,0 +1,15 @@
+[theme]
+# Cor primária agressiva e moderna (Verde Neon Financeiro)
+primaryColor = "#00C853"
+
+# Fundo escuro para baixo cansaço visual
+backgroundColor = "#0E1117"
+
+# Fundo secundário (usado para barra lateral, cards, dataframes e inputs)
+secondaryBackgroundColor = "#1E2127"
+
+# Texto claro de alto contraste
+textColor = "#FAFAFA"
+
+# Fonte limpa e profissional
+font = "sans serif"
