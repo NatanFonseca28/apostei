@@ -42,6 +42,7 @@ from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
 from src.data.feature_engineering import add_ewma_features
 from src.data.models import create_tables
+from src.data.team_name_normalizer import canonical
 
 logger = logging.getLogger(__name__)
 
@@ -88,54 +89,93 @@ def load_dataset(engine) -> pd.DataFrame:
     posse) via EWMA anti-data-leakage e retorna o DataFrame ordenado
     cronologicamente (obrigatório para TimeSeriesSplit).
 
-    Colunas avançadas ausentes no banco (home_xG, home_shots_target,
-    home_possession e equivalentes) são inicializadas com pd.NA e
-    preenchidas com mediana=0 pelo próprio add_ewma_features — resultado
-    esperado até que o ETL seja expandido para fontes com esses dados.
-    """    # Garante que match_advanced_stats existe no banco (no-op se já existir)
-    create_tables(engine)
-    query = """
-        SELECT
-            fm.id,
-            fm.data              AS date,
-            fm.time_casa         AS home_team,
-            fm.time_fora         AS away_team,
-            fm.placar_casa       AS home_goals,
-            fm.placar_fora       AS away_goals,
-            COALESCE(fm.media_marcados_casa, 0) AS media_marcados_casa,
-            COALESCE(fm.media_sofridos_casa, 0) AS media_sofridos_casa,
-            COALESCE(fm.media_marcados_fora, 0) AS media_marcados_fora,
-            COALESCE(fm.media_sofridos_fora, 0) AS media_sofridos_fora,
-            COALESCE(mas.home_xg,           0.0) AS home_xG,
-            COALESCE(mas.away_xg,           0.0) AS away_xG,
-            COALESCE(mas.home_shots_target, 0.0) AS home_shots_target,
-            COALESCE(mas.away_shots_target, 0.0) AS away_shots_target,
-            COALESCE(mas.home_possession,   0.0) AS home_possession,
-            COALESCE(mas.away_possession,   0.0) AS away_possession
-        FROM flashscore_matches fm
-        LEFT JOIN match_advanced_stats mas
-            ON  LOWER(fm.time_casa) = LOWER(mas.home_team)
-            AND LOWER(fm.time_fora) = LOWER(mas.away_team)
-            AND DATE(fm.data)       = DATE(mas.date)
-        WHERE fm.placar_casa IS NOT NULL AND fm.placar_fora IS NOT NULL
-        ORDER BY fm.data ASC
+    O JOIN com `match_advanced_stats` é feito via pandas merge com
+    normalização de nomes (src.data.team_name_normalizer.canonical),
+    resolvendo as diferenças entre os nomes abreviados do Flashscore
+    (ex: "Ath. Bilbao") e os nomes completos do Sofascore
+    (ex: "Athletic Club").
     """
-    df = pd.read_sql(query, engine, parse_dates=["date"])
+    # Garante que match_advanced_stats existe no banco (no-op se já existir)
+    create_tables(engine)
 
-    # Calcula features EWMA avançadas (xG, chutes no alvo, posse).
-    # Colunas-fonte ausentes no banco são inseridas como pd.NA e preenchidas
-    # com mediana=0 internamente — sem NaN residuais no DataFrame resultante.
+    # ── 1. Carrega flashscore_matches (partidas com placar definido) ──────────
+    fm_query = """
+        SELECT
+            id,
+            campeonato,
+            data              AS date,
+            time_casa         AS home_team,
+            time_fora         AS away_team,
+            placar_casa       AS home_goals,
+            placar_fora       AS away_goals,
+            COALESCE(media_marcados_casa, 0) AS media_marcados_casa,
+            COALESCE(media_sofridos_casa, 0) AS media_sofridos_casa,
+            COALESCE(media_marcados_fora, 0) AS media_marcados_fora,
+            COALESCE(media_sofridos_fora, 0) AS media_sofridos_fora
+        FROM flashscore_matches
+        WHERE placar_casa IS NOT NULL AND placar_fora IS NOT NULL
+        ORDER BY data ASC
+    """
+    fm = pd.read_sql(fm_query, engine, parse_dates=["date"])
+
+    # ── 2. Carrega match_advanced_stats ──────────────────────────────────────
+    mas_query = """
+        SELECT home_team, away_team, date,
+               home_xg, away_xg, home_shots_target, away_shots_target,
+               home_possession, away_possession
+        FROM match_advanced_stats
+    """
+    mas = pd.read_sql(mas_query, engine, parse_dates=["date"])
+
+    # ── 3. Normaliza nomes para JOIN tolerante a abreviações / idiomas ────────
+    fm["_home_key"] = fm["home_team"].apply(canonical)
+    fm["_away_key"] = fm["away_team"].apply(canonical)
+    fm["_date_key"] = fm["date"].dt.date
+
+    mas["_home_key"] = mas["home_team"].apply(canonical)
+    mas["_away_key"] = mas["away_team"].apply(canonical)
+    mas["_date_key"] = mas["date"].dt.date
+
+    # ── 4. LEFT JOIN via pandas merge ────────────────────────────────────────
+    mas_slim = mas[["_home_key", "_away_key", "_date_key", "home_xg", "away_xg", "home_shots_target", "away_shots_target", "home_possession", "away_possession"]]
+
+    df = fm.merge(mas_slim, on=["_home_key", "_away_key", "_date_key"], how="left")
+
+    # Preenche stats avançadas ausentes com 0
+    for col in ("home_xg", "away_xg", "home_shots_target", "away_shots_target", "home_possession", "away_possession"):
+        df[col] = df[col].fillna(0.0)
+
+    # Renomeia para compatibilidade com add_ewma_features
+    df = df.rename(
+        columns={
+            "home_xg": "home_xG",
+            "away_xg": "away_xG",
+            "home_shots_target": "home_shots_target",
+            "away_shots_target": "away_shots_target",
+            "home_possession": "home_possession",
+            "away_possession": "away_possession",
+        }
+    )
+
+    # Remove colunas auxiliares de merge
+    df = df.drop(columns=["_home_key", "_away_key", "_date_key"])
+
+    # Log de diagnóstico do JOIN
+    total = len(df)
+    matched = int((df["home_xG"] > 0).sum())
+    logger.info(f"JOIN Flashscore↔Sofascore: {matched}/{total} partidas com stats avançadas ({matched / total * 100:.1f}%)")
+
+    # ── 5. Calcula features EWMA (xG, chutes, posse) ─────────────────────────
     df = add_ewma_features(df)
 
-    # Cria o target: "H" / "D" / "A"
+    # ── 6. Cria o target: "H" / "D" / "A" ────────────────────────────────────
     conditions = [
-        df["home_goals"] > df["away_goals"],  # Vitória mandante
-        df["home_goals"] == df["away_goals"],  # Empate
-        df["home_goals"] < df["away_goals"],  # Vitória visitante
+        df["home_goals"] > df["away_goals"],
+        df["home_goals"] == df["away_goals"],
+        df["home_goals"] < df["away_goals"],
     ]
     df["target"] = np.select(conditions, ["H", "D", "A"], default="")
 
-    # Remove as poucas linhas onde o target ficou indefinido (não deve acontecer)
     df = df[(df["target"] != "") & df[FEATURE_COLS].notna().all(axis=1)].reset_index(drop=True)
 
     logger.info(f"Dataset carregado: {len(df)} jogos | H={(df['target'] == 'H').sum()} | D={(df['target'] == 'D').sum()} | A={(df['target'] == 'A').sum()}")
