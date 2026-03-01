@@ -21,16 +21,17 @@ Formato do CSV de apostas:
 
 import argparse
 import logging
-import sys, os
+import os
+import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.core.clv import (
     BetRecord,
+    ClosingSource,
     CLVAuditor,
     CLVReport,
-    ClosingSource,
     load_bets_from_csv,
     quick_clv_check,
 )
@@ -47,6 +48,7 @@ logger = logging.getLogger("CLV-Audit")
 # ============================================================================
 # MODOS DE EXECUCAO
 # ============================================================================
+
 
 def run_backtest_simulated(
     engine,
@@ -96,10 +98,7 @@ def run_backtest_with_model(
     scaler_path = Path("artifacts/scaler.pkl")
 
     if not model_path.exists() or not scaler_path.exists():
-        logger.warning(
-            "Modelo treinado nao encontrado em artifacts/. "
-            "Execute 'python run_trainer.py' primeiro, ou use o backtest simulado."
-        )
+        logger.warning("Modelo treinado nao encontrado em artifacts/. Execute 'python run_trainer.py' primeiro, ou use o backtest simulado.")
         logger.info("Executando backtest simulado como fallback...")
         return run_backtest_simulated(engine, source, min_ev, seasons)
 
@@ -200,15 +199,17 @@ def run_demo(engine):
     # Simula: aposta em todos os mandantes usando B365, compara com Pinnacle
     bets = []
     for _, row in df.iterrows():
-        bets.append(BetRecord(
-            match_id=int(row["id"]),
-            date=pd.Timestamp(row["date"]).to_pydatetime(),
-            home_team=row["home_team"],
-            away_team=row["away_team"],
-            outcome="H",
-            odds_taken=float(row["odds_home_b365"]),
-            model_prob=1.0 / float(row["odds_home_b365"]),  # prob implicita
-        ))
+        bets.append(
+            BetRecord(
+                match_id=int(row["id"]),
+                date=pd.Timestamp(row["date"]).to_pydatetime(),
+                home_team=row["home_team"],
+                away_team=row["away_team"],
+                outcome="H",
+                odds_taken=float(row["odds_home_b365"]),
+                model_prob=1.0 / float(row["odds_home_b365"]),  # prob implicita
+            )
+        )
 
     auditor = CLVAuditor(engine)
     report = auditor.audit_bets(bets, ClosingSource.PINNACLE)
@@ -238,16 +239,13 @@ def run_demo(engine):
 
     for src in ClosingSource:
         rpt = auditor.audit_bets(bets, src)
-        print(
-            f"  {src.value:<10} | Beat Rate: {rpt.beat_rate*100:5.1f}% | "
-            f"CLV Médio: {rpt.avg_clv*100:+.2f}% | "
-            f"Apostas: {rpt.bets_with_closing}"
-        )
+        print(f"  {src.value:<10} | Beat Rate: {rpt.beat_rate * 100:5.1f}% | CLV Médio: {rpt.avg_clv * 100:+.2f}% | Apostas: {rpt.bets_with_closing}")
 
 
 # ============================================================================
 # FUNCOES AUXILIARES
 # ============================================================================
+
 
 def print_sample(report: CLVReport, n: int = 10):
     """Imprime amostra dos resultados individuais."""
@@ -255,9 +253,9 @@ def print_sample(report: CLVReport, n: int = 10):
     if not valid:
         return
 
-    print(f"\n{'─'*75}")
+    print(f"\n{'─' * 75}")
     print(f"  AMOSTRA ({min(n, len(valid))}/{len(valid)} apostas)")
-    print(f"{'─'*75}")
+    print(f"{'─' * 75}")
 
     # Ordena por CLV (melhor primeiro)
     sorted_results = sorted(valid, key=lambda r: r.clv, reverse=True)
@@ -272,6 +270,7 @@ def print_sample(report: CLVReport, n: int = 10):
 # ============================================================================
 # MAIN
 # ============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -290,27 +289,16 @@ Exemplos:
     )
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--demo", action="store_true", default=True,
-                       help="Executa demo interativa (padrao)")
-    group.add_argument("--backtest", action="store_true",
-                       help="Backtest simulado com dados historicos")
-    group.add_argument("--model", action="store_true",
-                       help="Auditoria usando modelo treinado")
-    group.add_argument("--csv", type=str, metavar="FILE",
-                       help="Audita apostas de um arquivo CSV")
-    group.add_argument("--quick", nargs=2, type=float, metavar=("TAKEN", "CLOSING"),
-                       help="Calculo rapido de CLV")
+    group.add_argument("--demo", action="store_true", default=True, help="Executa demo interativa (padrao)")
+    group.add_argument("--backtest", action="store_true", help="Backtest simulado com dados historicos")
+    group.add_argument("--model", action="store_true", help="Auditoria usando modelo treinado")
+    group.add_argument("--csv", type=str, metavar="FILE", help="Audita apostas de um arquivo CSV")
+    group.add_argument("--quick", nargs=2, type=float, metavar=("TAKEN", "CLOSING"), help="Calculo rapido de CLV")
 
-    parser.add_argument("--source", type=str, default="pinnacle",
-                        choices=["pinnacle", "average", "bet365", "max"],
-                        help="Fonte das odds de fechamento (default: pinnacle)")
-    parser.add_argument("--min-ev", type=float, default=0.02,
-                        help="EV minimo para backtest (default: 0.02 = 2%%)")
-    parser.add_argument("--seasons", type=int, nargs="+",
-                        help="Temporadas a incluir (ex: 2023 2024)")
-    parser.add_argument("--db", type=str,
-                        default="sqlite:///understat_premier_league.db",
-                        help="Caminho do banco de dados")
+    parser.add_argument("--source", type=str, default="pinnacle", choices=["pinnacle", "average", "bet365", "max"], help="Fonte das odds de fechamento (default: pinnacle)")
+    parser.add_argument("--min-ev", type=float, default=0.02, help="EV minimo para backtest (default: 0.02 = 2%%)")
+    parser.add_argument("--seasons", type=int, nargs="+", help="Temporadas a incluir (ex: 2023 2024)")
+    parser.add_argument("--db", type=str, default="sqlite:///flashscore_data.db", help="Caminho do banco de dados")
 
     args = parser.parse_args()
 

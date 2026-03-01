@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 # Ajuste do path para rodar na raiz
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.data.models import CLVTracking, get_engine, get_session, create_tables
-from src.ml.pregame_scanner import PregameScanner, ODDS_API_BASE, ODDS_API_SPORT
+from src.data.models import CLVTracking, create_tables, get_engine, get_session
+from src.ml.pregame_scanner import ODDS_API_BASE, ODDS_API_SPORT, PregameScanner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -25,14 +25,15 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 API_KEY = os.getenv("ODDS_API_KEY")
 
-def capture_early_value(db_path: str = "sqlite:///understat_premier_league.db"):
+
+def capture_early_value(db_path: str = "sqlite:///flashscore_data.db"):
     """
     Busca apostas de valor nas proximas 24 horas usando o PregameScanner.
     Registra novas oportunidades na tabela clv_tracking.
     """
     logger.info("Iniciando captura de early value...")
     scanner = PregameScanner(db_path=db_path)
-    
+
     try:
         report = scanner.scan(min_ev=0.0, bankroll=1000.0, hours_window=24.0, odds_source="pinnacle")
     except Exception as e:
@@ -48,10 +49,7 @@ def capture_early_value(db_path: str = "sqlite:///understat_premier_league.db"):
 
     for bet in report.value_bets:
         # Verifica se já existe o mesmo bet analisado
-        exists = session.query(CLVTracking).filter_by(
-            event_id=bet.event_id,
-            outcome=bet.outcome
-        ).first()
+        exists = session.query(CLVTracking).filter_by(event_id=bet.event_id, outcome=bet.outcome).first()
 
         if not exists:
             clv_entry = CLVTracking(
@@ -64,7 +62,7 @@ def capture_early_value(db_path: str = "sqlite:///understat_premier_league.db"):
                 outcome=bet.outcome,
                 odd_capturada=bet.odds_taken,
                 prob_modelo=bet.model_prob,
-                bookmaker_usado=bet.bookmaker
+                bookmaker_usado=bet.bookmaker,
             )
             session.add(clv_entry)
             novos_registros += 1
@@ -74,7 +72,7 @@ def capture_early_value(db_path: str = "sqlite:///understat_premier_league.db"):
     session.close()
 
 
-def verify_closing_lines(db_path: str = "sqlite:///understat_premier_league.db"):
+def verify_closing_lines(db_path: str = "sqlite:///flashscore_data.db"):
     """
     Consulta jogos que começaram nas últimas 2 horas.
     Coleta a odd final da Pinnacle via The Odds API e calcula o CLV.
@@ -96,11 +94,7 @@ def verify_closing_lines(db_path: str = "sqlite:///understat_premier_league.db")
     iso_now = now.isoformat() + "Z"
     iso_two_hours_ago = two_hours_ago.isoformat() + "Z"
 
-    pending_bets = session.query(CLVTracking).filter(
-        CLVTracking.pinnacle_closing_odd.is_(None),
-        CLVTracking.commence_time >= iso_two_hours_ago,
-        CLVTracking.commence_time <= iso_now
-    ).all()
+    pending_bets = session.query(CLVTracking).filter(CLVTracking.pinnacle_closing_odd.is_(None), CLVTracking.commence_time >= iso_two_hours_ago, CLVTracking.commence_time <= iso_now).all()
 
     if not pending_bets:
         logger.info("Sem partidas pendentes iniciadas nas últimas 2 horas para verificar CLV.")
@@ -110,12 +104,7 @@ def verify_closing_lines(db_path: str = "sqlite:///understat_premier_league.db")
     logger.info(f"Encontradas {len(pending_bets)} bets pendentes de closing line. Consultando API...")
 
     url = f"{ODDS_API_BASE}/sports/{ODDS_API_SPORT}/odds"
-    params = {
-        "apiKey": API_KEY,
-        "regions": "eu",
-        "markets": "h2h",
-        "bookmakers": "pinnacle"
-    }
+    params = {"apiKey": API_KEY, "regions": "eu", "markets": "h2h", "bookmakers": "pinnacle"}
 
     try:
         resp = requests.get(url, params=params, timeout=15)
@@ -147,7 +136,7 @@ def verify_closing_lines(db_path: str = "sqlite:///understat_premier_league.db")
                         odds_dict["A"] = obj["price"]
                     elif name.lower() == "draw":
                         odds_dict["D"] = obj["price"]
-                
+
                 event_odds[ev_id] = odds_dict
 
     # Atualiza DB
@@ -164,14 +153,16 @@ def verify_closing_lines(db_path: str = "sqlite:///understat_premier_league.db")
     logger.info(f"Verificação concluida. {atualizados} closing lines atualizadas.")
     session.close()
 
+
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Apo$tei CLV Tracker")
     parser.add_argument("--capture", action="store_true", help="Captura value bets antecipados")
     parser.add_argument("--verify", action="store_true", help="Verifica as closing lines de jogos iniciados")
-    
+
     args = parser.parse_args()
-    
+
     # Se nao passar flag nenhuma, roda os dois por padrão no cron
     if not args.capture and not args.verify:
         capture_early_value()

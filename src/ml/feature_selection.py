@@ -11,9 +11,9 @@ O pipeline garante que no máximo `max_features` variáveis sobrevivam,
 reduzindo o risco de overfitting quando dezenas de colunas estão disponíveis.
 
 Nota de design:
-  Atualmente temos 8 features EWMA (todas relevantes). Quando features
-  adicionais do FBref forem integradas, este módulo se torna crítico
-  para conter a dimensionalidade.
+  Com 20 features disponíveis (gols, xG, chutes no alvo, posse), este
+  módulo é responsável por conter a dimensionalidade e reduzir o risco
+  de overfitting ao selecionar as features mais informativas.
 """
 
 import logging
@@ -21,19 +21,18 @@ import logging
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import SelectFromModel
-from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger(__name__)
 
 
 # ── Seleção via importância do Random Forest ──────────────────────────────────
 
+
 def select_by_model(
     X: np.ndarray,
     y: np.ndarray,
     feature_names: list[str],
-    max_features: int = 15,
+    max_features: int = 20,
     random_state: int = 42,
 ) -> tuple[list[str], np.ndarray]:
     """
@@ -75,12 +74,13 @@ def select_by_model(
 
     logger.info(f"SelectFromModel (RF): {len(feature_names)} → {len(selected)} features")
     for i, idx in enumerate(sorted_idx[:max_features]):
-        logger.info(f"  #{i+1:2d} {feature_names[idx]:<30s} importância={importances[idx]:.4f}")
+        logger.info(f"  #{i + 1:2d} {feature_names[idx]:<30s} importância={importances[idx]:.4f}")
 
     return selected, importances
 
 
 # ── Remoção por correlação redundante ─────────────────────────────────────────
+
 
 def remove_highly_correlated(
     X: np.ndarray,
@@ -131,11 +131,12 @@ def remove_highly_correlated(
 
 # ── Pipeline completo de seleção ──────────────────────────────────────────────
 
+
 def run_feature_selection(
     X: np.ndarray,
     y: np.ndarray,
     feature_names: list[str],
-    max_features: int = 15,
+    max_features: int = 20,
     corr_threshold: float = 0.95,
 ) -> tuple[list[str], dict]:
     """
@@ -149,9 +150,9 @@ def run_feature_selection(
         selected_features : lista final de features
         report : dicionário com detalhes do processo
     """
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"  FEATURE SELECTION -- {len(feature_names)} features de entrada")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     report = {"input_features": len(feature_names)}
 
@@ -164,20 +165,15 @@ def run_feature_selection(
     X_filtered = X[:, surviving_idx]
 
     # Etapa 2: Seleção por importância do RF
-    selected, importances_all = select_by_model(
-        X_filtered, y, surviving_corr, max_features=max_features
-    )
+    selected, importances_all = select_by_model(X_filtered, y, surviving_corr, max_features=max_features)
     report["after_model_selection"] = len(selected)
     report["selected_features"] = selected
 
     # Mapa de importâncias para as features finais
-    report["importances"] = {
-        name: float(importances_all[surviving_corr.index(name)])
-        for name in selected
-    }
+    report["importances"] = {name: float(importances_all[surviving_corr.index(name)]) for name in selected}
 
     logger.info(f"\n  Resultado final: {len(feature_names)} -> {len(selected)} features")
     logger.info(f"  Features selecionadas: {selected}")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"{'=' * 60}\n")
 
     return selected, report

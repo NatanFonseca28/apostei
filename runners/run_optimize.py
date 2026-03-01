@@ -19,10 +19,10 @@ Uso:
 
 import argparse
 import logging
+import os
 import sys
 
-import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.data.models import get_engine
 from src.ml.optimizer import run_optimization
@@ -38,29 +38,12 @@ logging.getLogger("optuna").setLevel(logging.WARNING)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Otimização Bayesiana de hiperparâmetros com Optuna"
-    )
-    parser.add_argument(
-        "--trials", type=int, default=100,
-        help="Número de trials do Optuna (padrão: 100)"
-    )
-    parser.add_argument(
-        "--splits", type=int, default=5,
-        help="Número de folds do TimeSeriesSplit (padrão: 5)"
-    )
-    parser.add_argument(
-        "--max-features", type=int, default=15,
-        help="Máximo de features após seleção (padrão: 15)"
-    )
-    parser.add_argument(
-        "--timeout", type=int, default=None,
-        help="Tempo máximo em segundos (padrão: sem limite)"
-    )
-    parser.add_argument(
-        "--db", type=str, default="sqlite:///understat_premier_league.db",
-        help="Caminho do banco SQLite"
-    )
+    parser = argparse.ArgumentParser(description="Otimização Bayesiana de hiperparâmetros com Optuna")
+    parser.add_argument("--trials", type=int, default=100, help="Número de trials do Optuna (padrão: 100)")
+    parser.add_argument("--splits", type=int, default=5, help="Número de folds do TimeSeriesSplit (padrão: 5)")
+    parser.add_argument("--max-features", type=int, default=15, help="Máximo de features após seleção (padrão: 15)")
+    parser.add_argument("--timeout", type=int, default=None, help="Tempo máximo em segundos (padrão: sem limite)")
+    parser.add_argument("--db", type=str, default="sqlite:///flashscore_data.db", help="Caminho do banco SQLite")
 
     args = parser.parse_args()
 

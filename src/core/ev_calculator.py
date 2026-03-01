@@ -146,9 +146,10 @@ def calculate_ev(
     odds: dict[str, float],
     home_team: str = "Mandante",
     away_team: str = "Visitante",
-    min_ev_threshold: float = 0.0,
-    min_odd: Optional[float] = None,
-    max_odd: Optional[float] = None,
+    min_ev_threshold: float = 0.05,
+    max_ev_threshold: float = 0.30,
+    min_odd: Optional[float] = 1.20,
+    max_odd: Optional[float] = 10.0,
 ) -> MatchEVReport:
     """
     Calcula o Valor Esperado (EV) para cada resultado de uma partida.
@@ -227,7 +228,7 @@ def calculate_ev(
         if max_odd is not None and odd > max_odd:
             in_odd_range = False
 
-        is_value = (ev > min_ev_threshold) and in_odd_range
+        is_value = (min_ev_threshold <= ev <= max_ev_threshold) and in_odd_range
         kelly    = _kelly_fraction(p, odd) if is_value else 0.0
 
         sign = "+" if ev >= 0 else ""
@@ -264,9 +265,10 @@ def calculate_ev(
 
 def scan_matches(
     matches: list[dict],
-    min_ev_threshold: float = 0.0,
-    min_odd: Optional[float] = None,
-    max_odd: Optional[float] = None,
+    min_ev_threshold: float = 0.05,
+    max_ev_threshold: float = 0.30,
+    min_odd: Optional[float] = 1.20,
+    max_odd: Optional[float] = 10.0,
 ) -> list[MatchEVReport]:
     """
     Analisa múltiplas partidas de uma vez e retorna apenas as que
@@ -300,6 +302,7 @@ def scan_matches(
             home_team=m.get("home_team", "Mandante"),
             away_team=m.get("away_team", "Visitante"),
             min_ev_threshold=min_ev_threshold,
+            max_ev_threshold=max_ev_threshold,
             min_odd=min_odd,
             max_odd=max_odd,
         )

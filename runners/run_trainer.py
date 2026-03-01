@@ -9,11 +9,12 @@ Uso:
 """
 
 import logging
-import sys
 
 # Adiciona o diretório raiz ao path para importar src
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.data.models import get_engine
 from src.ml.trainer import run_training_pipeline
@@ -25,5 +26,7 @@ logging.basicConfig(
 )
 
 if __name__ == "__main__":
-    engine = get_engine("sqlite:///understat_premier_league.db")
-    run_training_pipeline(engine, n_splits=5)
+    engine = get_engine()  # default: sqlite:///flashscore_data.db
+    results = run_training_pipeline(engine, n_splits=5)
+    if "model_path" in results:
+        print(f"\nModelo salvo em: {results['model_path']}")

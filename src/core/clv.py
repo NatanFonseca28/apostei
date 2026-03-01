@@ -52,7 +52,7 @@ from typing import Optional
 import pandas as pd
 import requests
 
-from .models import get_engine, get_session
+from .models import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -61,21 +61,23 @@ logger = logging.getLogger(__name__)
 # ENUMS E CONSTANTES
 # ============================================================================
 
+
 class ClosingSource(str, Enum):
     """Fonte das odds de fechamento para calculo do CLV."""
-    PINNACLE = "pinnacle"   # Sharp line — referencia do mercado
-    AVERAGE  = "average"    # Media do mercado
-    BET365   = "bet365"     # Bet365 (popular, boa liquidez)
-    MAX      = "max"        # Melhor odd disponivel no mercado
+
+    PINNACLE = "pinnacle"  # Sharp line — referencia do mercado
+    AVERAGE = "average"  # Media do mercado
+    BET365 = "bet365"  # Bet365 (popular, boa liquidez)
+    MAX = "max"  # Melhor odd disponivel no mercado
 
     @property
     def column_map(self) -> dict[str, str]:
         """Mapeamento outcome -> coluna no banco para esta fonte."""
         _maps = {
-            "pinnacle": {"H": "odds_home_pin",  "D": "odds_draw_pin",  "A": "odds_away_pin"},
-            "average":  {"H": "odds_home_avg",  "D": "odds_draw_avg",  "A": "odds_away_avg"},
-            "bet365":   {"H": "odds_home_b365", "D": "odds_draw_b365", "A": "odds_away_b365"},
-            "max":      {"H": "odds_home_max",  "D": "odds_draw_max",  "A": "odds_away_max"},
+            "pinnacle": {"H": "odds_home_pin", "D": "odds_draw_pin", "A": "odds_away_pin"},
+            "average": {"H": "odds_home_avg", "D": "odds_draw_avg", "A": "odds_away_avg"},
+            "bet365": {"H": "odds_home_b365", "D": "odds_draw_b365", "A": "odds_away_b365"},
+            "max": {"H": "odds_home_max", "D": "odds_draw_max", "A": "odds_away_max"},
         }
         return _maps[self.value]
 
@@ -97,6 +99,7 @@ ODDS_API_SPORT = "soccer_epl"
 # ESTRUTURAS DE DADOS
 # ============================================================================
 
+
 @dataclass
 class BetRecord:
     """
@@ -105,7 +108,7 @@ class BetRecord:
     Atributos
     ---------
     match_id : int
-        ID da partida (Understat ID, presente na tabela matches).
+        ID da partida no banco Flashscore.
     date : datetime
         Data/hora da partida.
     home_team : str
@@ -121,13 +124,14 @@ class BetRecord:
     stake_pct : float
         Percentual da banca apostado (0.01 = 1%).
     """
+
     match_id: int
     date: datetime
     home_team: str
     away_team: str
-    outcome: str          # "H", "D", "A"
-    odds_taken: float     # Odd no momento da aposta
-    model_prob: float     # Prob do modelo
+    outcome: str  # "H", "D", "A"
+    odds_taken: float  # Odd no momento da aposta
+    model_prob: float  # Prob do modelo
     stake_pct: float = 0.0  # % da banca apostado
 
     def __post_init__(self):
@@ -166,6 +170,7 @@ class CLVResult:
     implied_prob_closing : float
         Probabilidade implicita da odd de fechamento (1/odds_closing).
     """
+
     bet: BetRecord
     odds_closing: float
     clv: float
@@ -203,6 +208,7 @@ class CLVReport:
         - clv_by_outcome: CLV medio segmentado por H/D/A
         - correlation: correlacao entre CLV e resultado (ganho/perda)
     """
+
     results: list[CLVResult]
     closing_source: str
     generated_at: datetime = field(default_factory=datetime.now)
@@ -261,11 +267,7 @@ class CLVReport:
 
         sorted_clvs = sorted(clvs)
         n = len(sorted_clvs)
-        self.median_clv = (
-            sorted_clvs[n // 2]
-            if n % 2 == 1
-            else (sorted_clvs[n // 2 - 1] + sorted_clvs[n // 2]) / 2
-        )
+        self.median_clv = sorted_clvs[n // 2] if n % 2 == 1 else (sorted_clvs[n // 2 - 1] + sorted_clvs[n // 2]) / 2
         self.max_clv = max(clvs)
         self.min_clv = min(clvs)
 
@@ -302,22 +304,24 @@ class CLVReport:
         """Exporta resultados individuais como DataFrame."""
         rows = []
         for r in self.results:
-            rows.append({
-                "match_id": r.bet.match_id,
-                "date": r.bet.date,
-                "home_team": r.bet.home_team,
-                "away_team": r.bet.away_team,
-                "outcome": r.bet.outcome,
-                "odds_taken": r.bet.odds_taken,
-                "odds_closing": r.odds_closing,
-                "clv": r.clv,
-                "clv_pct": r.clv_pct,
-                "beat_closing": r.beat_closing,
-                "model_prob": r.bet.model_prob,
-                "actual_result": r.actual_result,
-                "bet_won": r.bet_won,
-                "closing_source": r.closing_source,
-            })
+            rows.append(
+                {
+                    "match_id": r.bet.match_id,
+                    "date": r.bet.date,
+                    "home_team": r.bet.home_team,
+                    "away_team": r.bet.away_team,
+                    "outcome": r.bet.outcome,
+                    "odds_taken": r.bet.odds_taken,
+                    "odds_closing": r.odds_closing,
+                    "clv": r.clv,
+                    "clv_pct": r.clv_pct,
+                    "beat_closing": r.beat_closing,
+                    "model_prob": r.bet.model_prob,
+                    "actual_result": r.actual_result,
+                    "bet_won": r.bet_won,
+                    "closing_source": r.closing_source,
+                }
+            )
         return pd.DataFrame(rows)
 
     def __str__(self) -> str:
@@ -344,7 +348,7 @@ class CLVReport:
 
         # Metrica principal: Beat Rate
         beat_bar = self._progress_bar(self.beat_rate, 30)
-        lines.append(f"║  🎯 BEAT RATE: {self.beat_rate*100:.1f}%  {beat_bar}  ({self.beat_count}/{self.bets_with_closing})".ljust(74) + "║")
+        lines.append(f"║  🎯 BEAT RATE: {self.beat_rate * 100:.1f}%  {beat_bar}  ({self.beat_count}/{self.bets_with_closing})".ljust(74) + "║")
         lines.append("║" + " " * 73 + "║")
 
         # Interpretacao do beat rate
@@ -361,14 +365,14 @@ class CLVReport:
         # Estatisticas CLV
         lines.append("║" + "  ESTATÍSTICAS CLV".ljust(73) + "║")
         lines.append("╟" + "─" * 73 + "╢")
-        lines.append(f"║  CLV Médio:    {self.avg_clv*100:+.2f}%".ljust(74) + "║")
-        lines.append(f"║  CLV Mediano:  {self.median_clv*100:+.2f}%".ljust(74) + "║")
-        lines.append(f"║  Desvio Padrão: {self.std_clv*100:.2f}%".ljust(74) + "║")
-        lines.append(f"║  CLV Máximo:   {self.max_clv*100:+.2f}%".ljust(74) + "║")
-        lines.append(f"║  CLV Mínimo:   {self.min_clv*100:+.2f}%".ljust(74) + "║")
+        lines.append(f"║  CLV Médio:    {self.avg_clv * 100:+.2f}%".ljust(74) + "║")
+        lines.append(f"║  CLV Mediano:  {self.median_clv * 100:+.2f}%".ljust(74) + "║")
+        lines.append(f"║  Desvio Padrão: {self.std_clv * 100:.2f}%".ljust(74) + "║")
+        lines.append(f"║  CLV Máximo:   {self.max_clv * 100:+.2f}%".ljust(74) + "║")
+        lines.append(f"║  CLV Mínimo:   {self.min_clv * 100:+.2f}%".ljust(74) + "║")
         lines.append("║" + " " * 73 + "║")
-        lines.append(f"║  Média (quando CLV+): {self.avg_clv_positive*100:+.2f}%".ljust(74) + "║")
-        lines.append(f"║  Média (quando CLV-): {self.avg_clv_negative*100:+.2f}%".ljust(74) + "║")
+        lines.append(f"║  Média (quando CLV+): {self.avg_clv_positive * 100:+.2f}%".ljust(74) + "║")
+        lines.append(f"║  Média (quando CLV-): {self.avg_clv_negative * 100:+.2f}%".ljust(74) + "║")
 
         # CLV por outcome
         if self.clv_by_outcome:
@@ -382,11 +386,7 @@ class CLVReport:
                 if outcome in self.clv_by_outcome:
                     data = self.clv_by_outcome[outcome]
                     label = OUTCOME_LABELS.get(outcome, outcome)
-                    lines.append(
-                        f"║  {label:<22} {data['count']:>5} "
-                        f"{data['avg_clv']*100:>+10.2f}% "
-                        f"{data['beat_rate']*100:>10.1f}%".ljust(74) + "║"
-                    )
+                    lines.append(f"║  {label:<22} {data['count']:>5} {data['avg_clv'] * 100:>+10.2f}% {data['beat_rate'] * 100:>10.1f}%".ljust(74) + "║")
 
         # Correlacao CLV vs Resultado (se disponivel)
         if self.total_settled > 0:
@@ -394,10 +394,10 @@ class CLVReport:
             lines.append("║" + "  RESULTADOS EM CAMPO".ljust(73) + "║")
             lines.append("╟" + "─" * 73 + "╢")
             lines.append(f"║  Apostas liquidadas: {self.total_settled}".ljust(74) + "║")
-            lines.append(f"║  Acertos: {self.wins} ({self.win_rate*100:.1f}%)".ljust(74) + "║")
+            lines.append(f"║  Acertos: {self.wins} ({self.win_rate * 100:.1f}%)".ljust(74) + "║")
             lines.append("║" + " " * 73 + "║")
-            lines.append(f"║  CLV médio (apostas GANHAS):   {self.clv_winners_avg*100:+.2f}%".ljust(74) + "║")
-            lines.append(f"║  CLV médio (apostas PERDIDAS): {self.clv_losers_avg*100:+.2f}%".ljust(74) + "║")
+            lines.append(f"║  CLV médio (apostas GANHAS):   {self.clv_winners_avg * 100:+.2f}%".ljust(74) + "║")
+            lines.append(f"║  CLV médio (apostas PERDIDAS): {self.clv_losers_avg * 100:+.2f}%".ljust(74) + "║")
 
             if self.clv_winners_avg > self.clv_losers_avg:
                 lines.append("║  → Apostas ganhas tinham CLV superior — sinal de edge real".ljust(74) + "║")
@@ -415,6 +415,7 @@ class CLVReport:
 # ============================================================================
 # AUDITOR CLV
 # ============================================================================
+
 
 class CLVAuditor:
     """
@@ -550,11 +551,7 @@ class CLVAuditor:
             Odds por outcome: {"H": 1.80, "D": 3.50, "A": 4.20}
         """
         if not self.odds_api_key:
-            logger.error(
-                "ODDS_API_KEY nao configurada. "
-                "Defina via variavel de ambiente ou parametro do construtor. "
-                "Cadastre-se gratis em: https://the-odds-api.com"
-            )
+            logger.error("ODDS_API_KEY nao configurada. Defina via variavel de ambiente ou parametro do construtor. Cadastre-se gratis em: https://the-odds-api.com")
             return {}
 
         params = {
@@ -648,10 +645,7 @@ class CLVAuditor:
         closing = self.get_closing_odds_from_db(bet.match_id, bet.outcome, source)
 
         if closing is None:
-            logger.warning(
-                f"Odd de fechamento nao encontrada: match_id={bet.match_id}, "
-                f"outcome={bet.outcome}, source={source.value}"
-            )
+            logger.warning(f"Odd de fechamento nao encontrada: match_id={bet.match_id}, outcome={bet.outcome}, source={source.value}")
             closing = 0.0
 
         # Calcula CLV
@@ -704,11 +698,7 @@ class CLVAuditor:
 
         report = CLVReport(results=results, closing_source=source.value)
 
-        logger.info(
-            f"Auditoria concluida: {report.beat_count}/{report.bets_with_closing} "
-            f"bateram a linha ({report.beat_rate*100:.1f}%), "
-            f"CLV medio: {report.avg_clv*100:+.2f}%"
-        )
+        logger.info(f"Auditoria concluida: {report.beat_count}/{report.bets_with_closing} bateram a linha ({report.beat_rate * 100:.1f}%), CLV medio: {report.avg_clv * 100:+.2f}%")
 
         return report
 
@@ -763,16 +753,18 @@ class CLVAuditor:
         """Backtest usando DataFrame de apostas pre-registradas."""
         bets = []
         for _, row in df.iterrows():
-            bets.append(BetRecord(
-                match_id=int(row["match_id"]),
-                date=pd.Timestamp(row["date"]).to_pydatetime() if "date" in row else datetime.now(),
-                home_team=row.get("home_team", ""),
-                away_team=row.get("away_team", ""),
-                outcome=row["outcome"],
-                odds_taken=float(row["odds_taken"]),
-                model_prob=float(row.get("model_prob", 0.0)),
-                stake_pct=float(row.get("stake_pct", 0.0)),
-            ))
+            bets.append(
+                BetRecord(
+                    match_id=int(row["match_id"]),
+                    date=pd.Timestamp(row["date"]).to_pydatetime() if "date" in row else datetime.now(),
+                    home_team=row.get("home_team", ""),
+                    away_team=row.get("away_team", ""),
+                    outcome=row["outcome"],
+                    odds_taken=float(row["odds_taken"]),
+                    model_prob=float(row.get("model_prob", 0.0)),
+                    stake_pct=float(row.get("stake_pct", 0.0)),
+                )
+            )
         return self.audit_bets(bets, source)
 
     def _backtest_simulated(
@@ -790,7 +782,7 @@ class CLVAuditor:
         """
         logger.info("Executando backtest historico simulado...")
         logger.info(f"  Proxy de abertura: Bet365  |  Fechamento: {source.value}")
-        logger.info(f"  EV minimo: {min_ev*100:.1f}%")
+        logger.info(f"  EV minimo: {min_ev * 100:.1f}%")
 
         # Carrega dados completos
         query = """
@@ -856,17 +848,19 @@ class CLVAuditor:
                 ev = (model_prob * odd_taken) - 1.0
 
                 if ev >= min_ev:
-                    bets.append(BetRecord(
-                        match_id=int(row["id"]),
-                        date=pd.Timestamp(row["date"]).to_pydatetime(),
-                        home_team=row["home_team"],
-                        away_team=row["away_team"],
-                        outcome=outcome,
-                        odds_taken=odd_taken,
-                        model_prob=model_prob,
-                    ))
+                    bets.append(
+                        BetRecord(
+                            match_id=int(row["id"]),
+                            date=pd.Timestamp(row["date"]).to_pydatetime(),
+                            home_team=row["home_team"],
+                            away_team=row["away_team"],
+                            outcome=outcome,
+                            odds_taken=odd_taken,
+                            model_prob=model_prob,
+                        )
+                    )
 
-        logger.info(f"  Apostas simuladas com EV >= {min_ev*100:.1f}%: {len(bets)}")
+        logger.info(f"  Apostas simuladas com EV >= {min_ev * 100:.1f}%: {len(bets)}")
 
         return self.audit_bets(bets, source)
 
@@ -913,9 +907,9 @@ class CLVAuditor:
         # Mapeamento de colunas de odds por fonte
         odds_cols_map = {
             "b365": ("odds_home_b365", "odds_draw_b365", "odds_away_b365"),
-            "avg":  ("odds_home_avg",  "odds_draw_avg",  "odds_away_avg"),
-            "max":  ("odds_home_max",  "odds_draw_max",  "odds_away_max"),
-            "pin":  ("odds_home_pin",  "odds_draw_pin",  "odds_away_pin"),
+            "avg": ("odds_home_avg", "odds_draw_avg", "odds_away_avg"),
+            "max": ("odds_home_max", "odds_draw_max", "odds_away_max"),
+            "pin": ("odds_home_pin", "odds_draw_pin", "odds_away_pin"),
         }
         oh, od, oa = odds_cols_map.get(odds_source, odds_cols_map["b365"])
 
@@ -946,10 +940,14 @@ class CLVAuditor:
 
         # Features para o modelo
         feature_cols = [
-            "ewma5_xg_pro_home", "ewma10_xg_pro_home",
-            "ewma5_xg_con_home", "ewma10_xg_con_home",
-            "ewma5_xg_pro_away", "ewma10_xg_pro_away",
-            "ewma5_xg_con_away", "ewma10_xg_con_away",
+            "ewma5_xg_pro_home",
+            "ewma10_xg_pro_home",
+            "ewma5_xg_con_home",
+            "ewma10_xg_con_home",
+            "ewma5_xg_pro_away",
+            "ewma10_xg_pro_away",
+            "ewma5_xg_con_away",
+            "ewma10_xg_con_away",
         ]
         X = df[feature_cols].values
         X_scaled = scaler.transform(X)
@@ -978,15 +976,17 @@ class CLVAuditor:
                 ev = (prob * odd) - 1.0
 
                 if ev >= min_ev:
-                    bets.append(BetRecord(
-                        match_id=int(row["id"]),
-                        date=pd.Timestamp(row["date"]).to_pydatetime(),
-                        home_team=row["home_team"],
-                        away_team=row["away_team"],
-                        outcome=outcome,
-                        odds_taken=float(odd),
-                        model_prob=float(prob),
-                    ))
+                    bets.append(
+                        BetRecord(
+                            match_id=int(row["id"]),
+                            date=pd.Timestamp(row["date"]).to_pydatetime(),
+                            home_team=row["home_team"],
+                            away_team=row["away_team"],
+                            outcome=outcome,
+                            odds_taken=float(odd),
+                            model_prob=float(prob),
+                        )
+                    )
 
         logger.info(f"  Apostas EV+ identificadas: {len(bets)}")
 
@@ -996,6 +996,7 @@ class CLVAuditor:
 # ============================================================================
 # FUNCOES AUXILIARES
 # ============================================================================
+
 
 def load_bets_from_csv(filepath: str) -> list[BetRecord]:
     """
@@ -1012,16 +1013,18 @@ def load_bets_from_csv(filepath: str) -> list[BetRecord]:
 
     bets = []
     for _, row in df.iterrows():
-        bets.append(BetRecord(
-            match_id=int(row["match_id"]),
-            date=pd.Timestamp(row["date"]).to_pydatetime(),
-            home_team=row["home_team"],
-            away_team=row["away_team"],
-            outcome=row["outcome"],
-            odds_taken=float(row["odds_taken"]),
-            model_prob=float(row.get("model_prob", 0.0)),
-            stake_pct=float(row.get("stake_pct", 0.0)),
-        ))
+        bets.append(
+            BetRecord(
+                match_id=int(row["match_id"]),
+                date=pd.Timestamp(row["date"]).to_pydatetime(),
+                home_team=row["home_team"],
+                away_team=row["away_team"],
+                outcome=row["outcome"],
+                odds_taken=float(row["odds_taken"]),
+                model_prob=float(row.get("model_prob", 0.0)),
+                stake_pct=float(row.get("stake_pct", 0.0)),
+            )
+        )
 
     logger.info(f"Carregadas {len(bets)} apostas de {filepath}")
     return bets
@@ -1042,4 +1045,4 @@ def quick_clv_check(
     clv = CLVAuditor.calculate_clv(odds_taken, odds_closing)
     tag = "✅ BATEU O MERCADO" if clv > 0 else "❌ LINHA VENCEU"
     prefix = f"{label}: " if label else ""
-    print(f"{prefix}Apostou @{odds_taken:.2f}, Fechou @{odds_closing:.2f} → CLV: {clv*100:+.2f}%  {tag}")
+    print(f"{prefix}Apostou @{odds_taken:.2f}, Fechou @{odds_closing:.2f} → CLV: {clv * 100:+.2f}%  {tag}")

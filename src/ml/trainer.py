@@ -27,7 +27,10 @@ Métricas de avaliação (por fold + sumário final):
 """
 
 import logging
+from datetime import datetime
+from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -37,68 +40,110 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
+from src.data.feature_engineering import add_ewma_features
+from src.data.models import create_tables
+
 logger = logging.getLogger(__name__)
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
 FEATURE_COLS = [
+    # Gols Básicos
     "media_marcados_casa",
     "media_sofridos_casa",
     "media_marcados_fora",
     "media_sofridos_fora",
+    # xG (Expected Goals)
+    "media_xg_casa",
+    "media_xga_casa",
+    "media10_xg_casa",
+    "media10_xga_casa",
+    "media_xg_fora",
+    "media_xga_fora",
+    "media10_xg_fora",
+    "media10_xga_fora",
+    # Chutes no Alvo
+    "media_chutes_alvo_casa",
+    "media_chutes_alvo_sofrido_casa",
+    "media_chutes_alvo_fora",
+    "media_chutes_alvo_sofrido_fora",
+    # Posse de Bola
+    "media_posse_casa",
+    "media_posse_sofrida_casa",
+    "media_posse_fora",
+    "media_posse_sofrida_fora",
 ]
 
 # Ordem canônica das classes — mantida consistente em todo o pipeline
-CLASSES = ["A", "D", "H"]   # Away win | Draw | Home win
+CLASSES = ["A", "D", "H"]  # Away win | Draw | Home win
 
 
 # ── Carregamento dos dados ────────────────────────────────────────────────────
 
+
 def load_dataset(engine) -> pd.DataFrame:
     """
-    Faz JOIN entre `matches` e `match_features`, cria a coluna `target`
-    e retorna o DataFrame ordenado cronologicamente (obrigatório para TSS).
+    Carrega partidas finalizadas de `flashscore_matches`, aplica
+    `add_ewma_features` para gerar as features avançadas (xG, chutes,
+    posse) via EWMA anti-data-leakage e retorna o DataFrame ordenado
+    cronologicamente (obrigatório para TimeSeriesSplit).
 
-    Retorna apenas linhas com features completas (sem NaN), descartando
-    os primeiros jogos de cada time onde o histórico ainda não existe.
-    """
+    Colunas avançadas ausentes no banco (home_xG, home_shots_target,
+    home_possession e equivalentes) são inicializadas com pd.NA e
+    preenchidas com mediana=0 pelo próprio add_ewma_features — resultado
+    esperado até que o ETL seja expandido para fontes com esses dados.
+    """    # Garante que match_advanced_stats existe no banco (no-op se já existir)
+    create_tables(engine)
     query = """
         SELECT
-            id,
-            data as date,
-            placar_casa as home_goals,
-            placar_fora as away_goals,
-            media_marcados_casa,
-            media_sofridos_casa,
-            media_marcados_fora,
-            media_sofridos_fora
-        FROM flashscore_matches
-        WHERE placar_casa IS NOT NULL AND placar_fora IS NOT NULL
-        ORDER BY date ASC
+            fm.id,
+            fm.data              AS date,
+            fm.time_casa         AS home_team,
+            fm.time_fora         AS away_team,
+            fm.placar_casa       AS home_goals,
+            fm.placar_fora       AS away_goals,
+            COALESCE(fm.media_marcados_casa, 0) AS media_marcados_casa,
+            COALESCE(fm.media_sofridos_casa, 0) AS media_sofridos_casa,
+            COALESCE(fm.media_marcados_fora, 0) AS media_marcados_fora,
+            COALESCE(fm.media_sofridos_fora, 0) AS media_sofridos_fora,
+            COALESCE(mas.home_xg,           0.0) AS home_xG,
+            COALESCE(mas.away_xg,           0.0) AS away_xG,
+            COALESCE(mas.home_shots_target, 0.0) AS home_shots_target,
+            COALESCE(mas.away_shots_target, 0.0) AS away_shots_target,
+            COALESCE(mas.home_possession,   0.0) AS home_possession,
+            COALESCE(mas.away_possession,   0.0) AS away_possession
+        FROM flashscore_matches fm
+        LEFT JOIN match_advanced_stats mas
+            ON  LOWER(fm.time_casa) = LOWER(mas.home_team)
+            AND LOWER(fm.time_fora) = LOWER(mas.away_team)
+            AND DATE(fm.data)       = DATE(mas.date)
+        WHERE fm.placar_casa IS NOT NULL AND fm.placar_fora IS NOT NULL
+        ORDER BY fm.data ASC
     """
     df = pd.read_sql(query, engine, parse_dates=["date"])
 
+    # Calcula features EWMA avançadas (xG, chutes no alvo, posse).
+    # Colunas-fonte ausentes no banco são inseridas como pd.NA e preenchidas
+    # com mediana=0 internamente — sem NaN residuais no DataFrame resultante.
+    df = add_ewma_features(df)
+
     # Cria o target: "H" / "D" / "A"
     conditions = [
-        df["home_goals"] > df["away_goals"],   # Vitória mandante
+        df["home_goals"] > df["away_goals"],  # Vitória mandante
         df["home_goals"] == df["away_goals"],  # Empate
-        df["home_goals"] < df["away_goals"],   # Vitória visitante
+        df["home_goals"] < df["away_goals"],  # Vitória visitante
     ]
     df["target"] = np.select(conditions, ["H", "D", "A"], default="")
 
     # Remove as poucas linhas onde o target ficou indefinido (não deve acontecer)
     df = df[(df["target"] != "") & df[FEATURE_COLS].notna().all(axis=1)].reset_index(drop=True)
 
-    logger.info(
-        f"Dataset carregado: {len(df)} jogos | "
-        f"H={( df['target']=='H').sum()} | "
-        f"D={(df['target']=='D').sum()} | "
-        f"A={(df['target']=='A').sum()}"
-    )
+    logger.info(f"Dataset carregado: {len(df)} jogos | H={(df['target'] == 'H').sum()} | D={(df['target'] == 'D').sum()} | A={(df['target'] == 'A').sum()}")
     return df
 
 
 # ── Métrica auxiliar ──────────────────────────────────────────────────────────
+
 
 def multiclass_brier_score(y_true: np.ndarray, y_prob: np.ndarray, classes: list) -> float:
     """
@@ -113,14 +158,16 @@ def multiclass_brier_score(y_true: np.ndarray, y_prob: np.ndarray, classes: list
     """
     lb = LabelBinarizer()
     lb.fit(classes)
-    y_bin = lb.transform(y_true)           # shape (N, 3)
+    y_bin = lb.transform(y_true)  # shape (N, 3)
     return float(np.mean(np.sum((y_prob - y_bin) ** 2, axis=1)))
 
 
 # ── Definição dos modelos ─────────────────────────────────────────────────────
 
-from sklearn.calibration import CalibratedClassifierCV
 from typing import Dict
+
+from sklearn.calibration import CalibratedClassifierCV
+
 
 def _build_models() -> Dict[str, Pipeline]:
     """
@@ -146,22 +193,27 @@ def _build_models() -> Dict[str, Pipeline]:
     )
 
     # Envolve com o calibrador (cv=3 é usado para evitar erros em folds pequenos)
-    calibrated_lr = CalibratedClassifierCV(estimator=lr_base, method='sigmoid', cv=3)
-    calibrated_rf = CalibratedClassifierCV(estimator=rf_base, method='sigmoid', cv=3)
+    calibrated_lr = CalibratedClassifierCV(estimator=lr_base, method="sigmoid", cv=3)
+    calibrated_rf = CalibratedClassifierCV(estimator=rf_base, method="sigmoid", cv=3)
 
     return {
-        "LogisticRegression": Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", calibrated_lr),
-        ]),
-        "RandomForest": Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", calibrated_rf),
-        ]),
+        "LogisticRegression": Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("clf", calibrated_lr),
+            ]
+        ),
+        "RandomForest": Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("clf", calibrated_rf),
+            ]
+        ),
     }
 
 
 # ── Pipeline de treinamento principal ────────────────────────────────────────
+
 
 def run_training_pipeline(engine, n_splits: int = 5) -> dict:
     """
@@ -197,9 +249,9 @@ def run_training_pipeline(engine, n_splits: int = 5) -> dict:
     logger.info("-" * 70)
 
     for model_name, pipeline in models.items():
-        logger.info(f"\n{'═'*70}")
+        logger.info(f"\n{'═' * 70}")
         logger.info(f"  Modelo: {model_name}")
-        logger.info(f"{'═'*70}")
+        logger.info(f"{'═' * 70}")
 
         fold_metrics = []
 
@@ -211,56 +263,65 @@ def run_training_pipeline(engine, n_splits: int = 5) -> dict:
             pipeline.fit(X_train, y_train)
 
             # Predições probabilísticas — necessárias para Log Loss e Brier Score
-            y_prob = pipeline.predict_proba(X_val)        # shape (n_val, 3)
+            y_prob = pipeline.predict_proba(X_val)  # shape (n_val, 3)
             y_pred = pipeline.predict(X_val)
 
             # ── Métricas ──────────────────────────────────────────────────────
-            ll   = log_loss(y_val, y_prob, labels=CLASSES)
-            bs   = multiclass_brier_score(y_val, y_prob, CLASSES)
-            acc  = accuracy_score(y_val, y_pred)
+            ll = log_loss(y_val, y_prob, labels=CLASSES)
+            bs = multiclass_brier_score(y_val, y_prob, CLASSES)
+            acc = accuracy_score(y_val, y_pred)
 
             fold_metrics.append({"fold": fold_idx, "log_loss": ll, "brier": bs, "accuracy": acc})
 
-            logger.info(
-                f"  Fold {fold_idx:2d} | "
-                f"Treino: {len(train_idx):4d} jogos → Validação: {len(val_idx):4d} jogos | "
-                f"LogLoss={ll:.4f}  Brier={bs:.4f}  Acc={acc:.3f}"
-            )
+            logger.info(f"  Fold {fold_idx:2d} | Treino: {len(train_idx):4d} jogos → Validação: {len(val_idx):4d} jogos | LogLoss={ll:.4f}  Brier={bs:.4f}  Acc={acc:.3f}")
 
         # ── Sumário estatístico ───────────────────────────────────────────────
         metrics_df = pd.DataFrame(fold_metrics)
-        summary = {
-            col: {"mean": metrics_df[col].mean(), "std": metrics_df[col].std()}
-            for col in ("log_loss", "brier", "accuracy")
-        }
+        summary = {col: {"mean": metrics_df[col].mean(), "std": metrics_df[col].std()} for col in ("log_loss", "brier", "accuracy")}
 
-        logger.info(f"\n  {'─'*60}")
+        logger.info(f"\n  {'─' * 60}")
         logger.info(f"  SUMÁRIO — {model_name}")
-        logger.info(f"  {'─'*60}")
+        logger.info(f"  {'─' * 60}")
         logger.info(f"  Log Loss  : {summary['log_loss']['mean']:.4f} ± {summary['log_loss']['std']:.4f}")
         logger.info(f"  Brier     : {summary['brier']['mean']:.4f} ± {summary['brier']['std']:.4f}")
         logger.info(f"  Accuracy  : {summary['accuracy']['mean']:.3f} ± {summary['accuracy']['std']:.3f}")
-        logger.info(f"  {'─'*60}")
-        logger.info(f"  Referência ingênua (1/3 por classe):")
-        logger.info(f"    Log Loss ≈ 1.0986  |  Brier ≈ 0.6667  |  Acc ≈ 0.333")
+        logger.info(f"  {'─' * 60}")
+        logger.info("  Referência ingênua (1/3 por classe):")
+        logger.info("    Log Loss ≈ 1.0986  |  Brier ≈ 0.6667  |  Acc ≈ 0.333")
 
         all_results[model_name] = {"folds": fold_metrics, "summary": summary}
 
     # ── Comparativo final ─────────────────────────────────────────────────────
-    logger.info(f"\n{'═'*70}")
+    logger.info(f"\n{'═' * 70}")
     logger.info("  COMPARATIVO FINAL (média sobre todos os folds)")
-    logger.info(f"{'═'*70}")
+    logger.info(f"{'═' * 70}")
     logger.info(f"  {'Modelo':<22} {'Log Loss':>10} {'Brier':>10} {'Accuracy':>10}")
-    logger.info(f"  {'-'*54}")
+    logger.info(f"  {'-' * 54}")
     for name, res in all_results.items():
         s = res["summary"]
-        logger.info(
-            f"  {name:<22} "
-            f"{s['log_loss']['mean']:>10.4f} "
-            f"{s['brier']['mean']:>10.4f} "
-            f"{s['accuracy']['mean']:>10.3f}"
-        )
+        logger.info(f"  {name:<22} {s['log_loss']['mean']:>10.4f} {s['brier']['mean']:>10.4f} {s['accuracy']['mean']:>10.3f}")
     logger.info(f"  {'Ingênuo (baseline)':<22} {'1.0986':>10} {'0.6667':>10} {'0.333':>10}")
-    logger.info(f"{'═'*70}\n")
+    logger.info(f"{'═' * 70}\n")
 
+    # ── Treinamento final no dataset completo + persistência do modelo ────────
+    best_model_name = min(
+        all_results,
+        key=lambda n: all_results[n]["summary"]["log_loss"]["mean"],
+    )
+    logger.info(f"Melhor modelo (menor Log Loss médio): {best_model_name}")
+    logger.info("Treinando modelo final no dataset completo...")
+
+    final_pipeline = _build_models()[best_model_name]
+    final_pipeline.fit(X, y)
+
+    Path("artifacts").mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pkl_path = Path("artifacts") / f"best_model_{timestamp}.pkl"
+    joblib.dump(
+        {"model": final_pipeline, "feature_cols": FEATURE_COLS, "classes": CLASSES},
+        pkl_path,
+    )
+    logger.info(f"Modelo salvo em: {pkl_path}")
+
+    all_results["model_path"] = str(pkl_path)
     return all_results

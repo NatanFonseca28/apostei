@@ -18,5 +18,7 @@ yarl==1.22.0
 python-dotenv
 google-generativeai
 requests
+curl-cffi          # impersona TLS do Chrome — contorna Cloudflare da API do Sofascore
 scikit-learn
 optuna
+# soccerdata removido — a coleta do Sofascore é feita diretamente via curl-cffi

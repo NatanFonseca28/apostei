@@ -7,6 +7,28 @@ __pycache__/
 *.pyo
 .venv/
 
+# Banco de dados local (dados pessoais/sensíveis)
+*.db
+*.sqlite
+*.sqlite3
+
+# Modelos treinados (binários grandes)
+artifacts/*.pkl
+
+# Cache local do coletor
+.apostei/
+
+# Arquivos temporários de debug/teste
+_tmp_*.py
+*.html
+api_events.json
+api_teams_temp.txt
+apostas_teste.json
+bets.json
+dados_futebol.csv
+match_teams.txt
+test_out.txt
+
 # Logs temporarios
 *.log
 

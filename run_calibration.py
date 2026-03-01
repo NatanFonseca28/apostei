@@ -1,26 +1,30 @@
 import os
 import sys
-import glob
 from pathlib import Path
 
 # Adiciona a raiz ao sys.path para importações absolutas do src
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 import joblib
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
 
 from src.data.models import get_engine
 
 FEATURE_COLS = [
-    "ewma5_xg_pro_home",  "ewma10_xg_pro_home",
-    "ewma5_xg_con_home",  "ewma10_xg_con_home",
-    "ewma5_xg_pro_away",  "ewma10_xg_pro_away",
-    "ewma5_xg_con_away",  "ewma10_xg_con_away",
+    "ewma5_xg_pro_home",
+    "ewma10_xg_pro_home",
+    "ewma5_xg_con_home",
+    "ewma10_xg_con_home",
+    "ewma5_xg_pro_away",
+    "ewma10_xg_pro_away",
+    "ewma5_xg_con_away",
+    "ewma10_xg_con_away",
 ]
+
 
 def main():
     print("=" * 60)
@@ -34,10 +38,7 @@ def main():
         return
 
     # Procura ficheiros .pkl omitindo 'scaler' e 'metadata'
-    model_files = [
-        f for f in artifact_dir.glob("*.pkl") 
-        if "scaler" not in f.name and "meta" not in f.name
-    ]
+    model_files = [f for f in artifact_dir.glob("*.pkl") if "scaler" not in f.name and "meta" not in f.name]
 
     if not model_files:
         print("Erro: Nenhum modelo (.pkl) encontrado em artifacts/")
@@ -56,11 +57,11 @@ def main():
         print("Scaler associado carregado com sucesso.")
 
     # 2. Conectar à base de dados
-    db_path = "sqlite:///understat_premier_league.db"
+    db_path = "sqlite:///flashscore_data.db"
     print(f"Conectando à base de dados: {db_path} ...")
     engine = get_engine(db_path)
 
-    # 3. Extrair dados da última temporada viável (que tenha features) 
+    # 3. Extrair dados da última temporada viável (que tenha features)
     # Usamos os resultados das vitórias através das equipas
     query = """
         SELECT m.home_team, m.away_team, m.home_goals, m.away_goals,
@@ -98,13 +99,13 @@ def main():
     if scaler:
         # Se for um modelo que precise do sklearn Pipeline que não guardou o scaler, aplicar
         # Neste caso o scaler local será aplicado:
-        # Se o obj model for Pipeline de Sklearn pode não necessitar do scaler extra 
+        # Se o obj model for Pipeline de Sklearn pode não necessitar do scaler extra
         # mas estamos a seguir a separação habitual.
         try:
             X = scaler.transform(X)
         except Exception as e:
             print(f"Aviso: Não foi possível escalar os dados ({e}). O modelo pode ser um Pipiline que já o faça.")
-            
+
     # 4. Probabilidades Previstas
     y_prob = model.predict_proba(X)
     classes = model.classes_  # Tipicamente ['A', 'D', 'H']
@@ -136,7 +137,7 @@ def main():
         ax.grid(True, linestyle="--", alpha=0.7)
 
     plt.tight_layout()
-    
+
     # 6. Salvar gráfico
     plot_path = "calibration_curve.png"
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
@@ -149,6 +150,7 @@ def main():
         print(f"Classe {cls:2s}: {bs:.4f}")
     print("-" * 40)
     print("Auditoria concluída com sucesso!")
+
 
 if __name__ == "__main__":
     main()
