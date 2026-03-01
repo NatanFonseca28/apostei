@@ -328,30 +328,36 @@ class PregameScanner:
     def get_team_features(self) -> pd.DataFrame:
         """
         Retorna as features EWMA mais recentes para cada time no banco.
-
-        Para cada time, pega a ultima partida (como mandante E visitante)
-        e extrai as features EWMA, que representam o 'estado atual' do time.
+        Usa load_dataset() do trainer para obter TODAS as 20 colunas EWMA
+        (gols, xG, chutes no alvo, posse) com o JOIN Flashscore + Sofascore.
         """
-        query = """
-            SELECT
-                id, data as date, time_casa as home_team, time_fora as away_team,
-                media_marcados_casa, media_sofridos_casa,
-                media_marcados_fora, media_sofridos_fora
-            FROM flashscore_matches
-            ORDER BY data DESC
-        """
-        df = pd.read_sql(query, self.engine, parse_dates=["date"])
+        try:
+            from src.ml.trainer import load_dataset
 
-        # Filtro de histórico zerado
-        # Remove partidas onde o time tem média 0.0 em gols marcados ou sofridos (falta de histórico estatístico)
-        len_before = len(df)
-        df = df[(df["media_marcados_casa"] > 0) & (df["media_sofridos_casa"] > 0) & (df["media_marcados_fora"] > 0) & (df["media_sofridos_fora"] > 0)]
-        dropped = len_before - len(df)
-        if dropped > 0:
-            logger.warning(f"Descartadas {dropped} partidas por falta de histórico estatístico (Gols Zerados).")
-
-        logger.info(f"Carregadas {len(df)} partidas com features do banco (após filtro)")
-        return df
+            df = load_dataset(self.engine)
+            if df.empty:
+                raise ValueError("load_dataset retornou DataFrame vazio")
+            df = df.sort_values("date", ascending=False).reset_index(drop=True)
+            # Filtro mínimo: requer pelo menos gols marcados/sofridos
+            len_before = len(df)
+            df = df[(df["media_marcados_casa"] > 0) & (df["media_sofridos_casa"] > 0) & (df["media_marcados_fora"] > 0) & (df["media_sofridos_fora"] > 0)]
+            dropped = len_before - len(df)
+            if dropped > 0:
+                logger.debug(f"{dropped} partidas descartadas por histórico zerado.")
+            logger.info(f"get_team_features: {len(df)} partidas com todas as features EWMA (Flashscore+Sofascore)")
+            return df
+        except Exception as exc:
+            logger.warning(f"load_dataset falhou ({exc}); usando fallback apenas com gols.")
+            query = """
+                SELECT id, data as date, time_casa as home_team, time_fora as away_team,
+                    media_marcados_casa, media_sofridos_casa,
+                    media_marcados_fora, media_sofridos_fora
+                FROM flashscore_matches ORDER BY data DESC
+            """
+            df = pd.read_sql(query, self.engine, parse_dates=["date"])
+            df = df[(df["media_marcados_casa"] > 0) & (df["media_sofridos_casa"] > 0) & (df["media_marcados_fora"] > 0) & (df["media_sofridos_fora"] > 0)]
+            logger.info(f"Fallback: {len(df)} partidas com gols apenas")
+            return df
 
     def build_feature_vector(
         self,
@@ -383,21 +389,49 @@ class PregameScanner:
             return None
         away_row = away_matches.iloc[0]
 
-        # Monta vetor completo
-        full_vector = {
-            "media_marcados_casa": home_row["media_marcados_casa"],
-            "media_sofridos_casa": home_row["media_sofridos_casa"],
-            "media_marcados_fora": away_row["media_marcados_fora"],
-            "media_sofridos_fora": away_row["media_sofridos_fora"],
-        }
+        # Colunas disponíveis em casa (mandante) e fora (visitante)
+        _CASA_COLS = [
+            "media_marcados_casa",
+            "media_sofridos_casa",
+            "media_xg_casa",
+            "media_xga_casa",
+            "media10_xg_casa",
+            "media10_xga_casa",
+            "media_chutes_alvo_casa",
+            "media_chutes_alvo_sofrido_casa",
+            "media_posse_casa",
+            "media_posse_sofrida_casa",
+        ]
+        _FORA_COLS = [
+            "media_marcados_fora",
+            "media_sofridos_fora",
+            "media_xg_fora",
+            "media_xga_fora",
+            "media10_xg_fora",
+            "media10_xga_fora",
+            "media_chutes_alvo_fora",
+            "media_chutes_alvo_sofrido_fora",
+            "media_posse_fora",
+            "media_posse_sofrida_fora",
+        ]
 
-        # Verifica NaNs
-        if any(pd.isna(v) for v in full_vector.values()):
-            logger.debug(f"Features incompletas para {home_team} vs {away_team}")
+        # Monta vetor completo com todas as features disponíveis
+        full_vector: dict[str, float] = {}
+        for col in _CASA_COLS:
+            val = home_row.get(col, 0.0)
+            full_vector[col] = float(val) if (val is not None and not pd.isna(val)) else 0.0
+        for col in _FORA_COLS:
+            val = away_row.get(col, 0.0)
+            full_vector[col] = float(val) if (val is not None and not pd.isna(val)) else 0.0
+
+        # Verifica NaNs nas features básicas (gols)
+        basic_cols = ["media_marcados_casa", "media_sofridos_casa", "media_marcados_fora", "media_sofridos_fora"]
+        if any(full_vector.get(c, 0.0) == 0.0 for c in basic_cols):
+            logger.debug(f"Features de gols zeradas para {home_team} vs {away_team}")
             return None
 
-        # Seleciona apenas as features usadas pelo modelo
-        selected = [full_vector[f] for f in self.selected_features]
+        # Seleciona apenas as features usadas pelo modelo (pode ser subconjunto dos 20)
+        selected = [full_vector.get(f, 0.0) for f in self.selected_features]
         return np.array(selected).reshape(1, -1)
 
     # ─── Odds ao vivo da The Odds API ───────────────────────────────────────
@@ -656,19 +690,39 @@ class PregameScanner:
                 # Vamos simplificar e puxar do df
                 home_feats = {}
                 away_feats = {}
+                _CASA_STAT_COLS = [
+                    "media_marcados_casa",
+                    "media_sofridos_casa",
+                    "media_xg_casa",
+                    "media_xga_casa",
+                    "media10_xg_casa",
+                    "media10_xga_casa",
+                    "media_chutes_alvo_casa",
+                    "media_chutes_alvo_sofrido_casa",
+                    "media_posse_casa",
+                    "media_posse_sofrida_casa",
+                ]
+                _FORA_STAT_COLS = [
+                    "media_marcados_fora",
+                    "media_sofridos_fora",
+                    "media_xg_fora",
+                    "media_xga_fora",
+                    "media10_xg_fora",
+                    "media10_xga_fora",
+                    "media_chutes_alvo_fora",
+                    "media_chutes_alvo_sofrido_fora",
+                    "media_posse_fora",
+                    "media_posse_sofrida_fora",
+                ]
                 try:
                     h_matches = all_matches[all_matches["home_team"] == event.home_team]
                     a_matches = all_matches[all_matches["away_team"] == event.away_team]
                     if not h_matches.empty:
-                        home_feats = {
-                            "media_marcados_casa": round(h_matches.iloc[0]["media_marcados_casa"], 2),
-                            "media_sofridos_casa": round(h_matches.iloc[0]["media_sofridos_casa"], 2),
-                        }
+                        row = h_matches.iloc[0]
+                        home_feats = {col: round(float(row[col]), 3) for col in _CASA_STAT_COLS if col in row.index and row[col] is not None and not pd.isna(row[col])}
                     if not a_matches.empty:
-                        away_feats = {
-                            "media_marcados_fora": round(a_matches.iloc[0]["media_marcados_fora"], 2),
-                            "media_sofridos_fora": round(a_matches.iloc[0]["media_sofridos_fora"], 2),
-                        }
+                        row = a_matches.iloc[0]
+                        away_feats = {col: round(float(row[col]), 3) for col in _FORA_STAT_COLS if col in row.index and row[col] is not None and not pd.isna(row[col])}
                 except Exception:
                     pass
                 # Tenta gerar insight IA cacheado por partida e outcome
